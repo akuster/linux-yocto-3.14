@@ -1699,7 +1699,7 @@ static void read_symbols(char *modname)
 	char *version;
 	char *license;
 	struct module *mod;
-	struct elf_info info = { };
+	struct elf_info info = { .hdr = NULL };
 	Elf_Sym *sym;
 
 	if (!parse_elf(&info, modname))
@@ -2112,7 +2112,7 @@ static int dump_sym(struct symbol *sym)
 
 static void write_dump(const char *fname)
 {
-	struct buffer buf = { };
+	struct buffer buf = { NULL, 0, 0 };
 	struct symbol *symbol;
 	int n;
 
@@ -2138,7 +2138,7 @@ struct ext_sym_list {
 int main(int argc, char **argv)
 {
 	struct module *mod;
-	struct buffer buf = { };
+	struct buffer buf = { NULL, 0, 0 };
 	char *kernel_read = NULL, *module_read = NULL;
 	char *dump_write = NULL, *files_source = NULL;
 	int opt;
