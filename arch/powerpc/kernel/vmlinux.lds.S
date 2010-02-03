@@ -8,6 +8,11 @@
 #include <asm/cache.h>
 #include <asm/thread_info.h>
 
+#ifdef CONFIG_PPC_QEMU
+#undef LOAD_OFFSET
+#define LOAD_OFFSET 0
+#endif /* CONFIG_PPC_QEMU */
+
 ENTRY(_stext)
 
 PHDRS {
