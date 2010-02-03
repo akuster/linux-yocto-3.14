@@ -152,9 +152,18 @@ struct irq_data *irq_get_irq_data(unsigned int irq)
 }
 EXPORT_SYMBOL_GPL(irq_get_irq_data);
 
+#define IRQ_DELAYED_DISABLE    0x10000000      /* IRQ disable (masking) happens delayed. */
+
 static void irq_state_clr_disabled(struct irq_desc *desc)
 {
+#ifdef CONFIG_PPC_QEMU
+	struct irq_desc *desc = irq_data_to_desc(irq);
+
+	if (!(desc->status & IRQ_DELAYED_DISABLE))
+		desc->chip->mask(irq);
+#else
 	irqd_clear(&desc->irq_data, IRQD_IRQ_DISABLED);
+#endif /* CONFIG_PPC_QEMU */
 }
 
 static void irq_state_set_disabled(struct irq_desc *desc)
