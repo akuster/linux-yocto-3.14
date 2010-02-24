@@ -22,6 +22,8 @@
 #include <linux/device.h>
 #include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
+#include <linux/mtd/mtd.h>
+#include <linux/mtd/partitions.h>
 #include <linux/interrupt.h>
 #include <linux/irqdomain.h>
 #include <linux/of_address.h>
@@ -206,9 +208,40 @@ static void versatile_flash_set_vpp(struct platform_device *pdev, int on)
 	__raw_writel(val, VERSATILE_FLASHCTRL);
 }
 
+static struct mtd_partition versatile_partitions[] = {
+	{ /* bootloader and params */
+		.name           = "bootloader",
+		.offset         = 0,
+		.size           = SZ_256K +  SZ_128K,
+		.mask_flags     = MTD_WRITEABLE,        /* force read-only */
+	}, {
+		.name           = "kernel",
+		.offset         = MTDPART_OFS_APPEND,
+		.size           = (0x400000 - 0x60000),
+		.mask_flags     = 0,
+	}, {
+		.name           = "jffs2",
+		.offset         = MTDPART_OFS_APPEND,
+		.size           = 0x700000,
+		.mask_flags     = 0,
+	}, {
+		.name           = "cramfs",
+		.offset         = MTDPART_OFS_APPEND,
+		.size           = 0x200000,
+		.mask_flags     = 0,
+	}, {
+		.name           = "user data",
+		.offset         = MTDPART_OFS_APPEND,
+		.size           = MTDPART_SIZ_FULL,
+		.mask_flags     = 0,
+	}
+};
+
 static struct physmap_flash_data versatile_flash_data = {
 	.width			= 4,
 	.set_vpp		= versatile_flash_set_vpp,
+	.parts                  = versatile_partitions,
+	.nr_parts               = ARRAY_SIZE(versatile_partitions),
 };
 
 static struct resource versatile_flash_resource = {
