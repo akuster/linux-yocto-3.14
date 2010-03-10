@@ -122,6 +122,27 @@ static void malta_piix_func1_fixup(struct pci_dev *pdev)
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371AB,
 	 malta_piix_func1_fixup);
 
+/* Use the io resource allocated by YAMON */
+static void __init malta_pcnet32_ioports_fixup(struct pci_dev *pdev)
+{
+	u32 check = 0, new = 0x1060;
+
+	pdev->resource[0].start = new;
+	pdev->resource[0].end = new + 0x1f;
+
+	pci_write_config_dword(pdev, 0x10, new);
+	pci_read_config_dword(pdev, 0x10, &check);
+
+	if ((new ^ check) & (u32)PCI_BASE_ADDRESS_IO_MASK)
+		printk(KERN_WARNING "pcnet32's BAR0 error updating (%#08x != %#08x)\n",
+				check, new);
+	else
+		printk(KERN_NOTICE "pcnet32's BAR0 updating is successful!\n");
+}
+
+DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_LANCE,
+	malta_pcnet32_ioports_fixup);
+
 /* Enable PCI 2.1 compatibility in PIIX4 */
 static void quirk_dlcsetup(struct pci_dev *dev)
 {
