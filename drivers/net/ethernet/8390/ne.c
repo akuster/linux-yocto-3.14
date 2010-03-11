@@ -488,8 +488,19 @@ static int __init ne_probe1(struct net_device *dev, unsigned long ioaddr)
 	} else if (dev->irq == 2)
 		/* Fixup for users that don't know that IRQ 2 is really IRQ 9,
 		   or don't know which one to set. */
+		if (ioaddr == 0x300)
 		dev->irq = 9;
-
+		else if (ioaddr == 0x320)
+		dev->irq = 10;
+		else if (ioaddr == 0x340)
+		dev->irq = 11;
+		else {
+		printk(KERN_ERR "failed to probe %s, QEMU supports at most 3 interfaces.\n",
+		       dev->name);
+		ret = -ENODEV;
+		goto err_out;
+	}
+#endif
 	if (! dev->irq) {
 		pr_cont(" failed to detect IRQ line.\n");
 		ret = -EAGAIN;
