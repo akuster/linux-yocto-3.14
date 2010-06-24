@@ -45,6 +45,9 @@ static const int legacy_irqs[]  = { PLD_IRQ_CFIREQ, PLD_IRQ_IDEIREQ };
 #elif defined(CONFIG_ALPHA)
 static const u16 legacy_bases[] = { 0x1f0, 0x170, 0x1e8, 0x168 };
 static const int legacy_irqs[]  = { 14, 15, 11, 10 };
+#elif defined(CONFIG_PPC_QEMU)
+static const u16 legacy_bases[] = { 0x1f0, 0x170, 0x1e8, 0x168 };
+static const int legacy_irqs[]  = { 13, 13, 11, 10 };
 #else
 static const u16 legacy_bases[] = { 0x1f0, 0x170, 0x1e8, 0x168, 0x1e0, 0x160 };
 static const int legacy_irqs[]  = { 14, 15, 11, 10, 8, 12 };
