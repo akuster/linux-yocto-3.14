@@ -3,6 +3,8 @@
 
 #include <asm/unistd.h>
 
+#include <stdbool.h>
+
 #if defined(__i386__)
 #define mb()		asm volatile("lock; addl $0,0(%%esp)" ::: "memory")
 #define wmb()		asm volatile("lock; addl $0,0(%%esp)" ::: "memory")
