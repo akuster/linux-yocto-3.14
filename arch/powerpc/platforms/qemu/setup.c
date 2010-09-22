@@ -159,6 +159,22 @@ static int __init qemu_probe(void)
 	return 1;
 }
 
+void qemu_restart(char *cmd)
+{
+	local_irq_disable(); /* no interrupts */
+	/* set exception prefix high - to the prom */
+	mtmsr(mfmsr() | MSR_IP);
+
+	/* make sure bit 0 (reset) is a 0 */
+	outb(inb(0x92) & ~1L, 0x92);
+	/* signal a reset to system control port A - soft reset */
+	outb(inb(0x92) | 1, 0x92);
+
+	while(1);
+
+	/* not reached */
+}
+
 define_machine(qemu) {
 	.name			= "QEMU",
 	.probe			= qemu_probe,
@@ -167,7 +183,7 @@ define_machine(qemu) {
 	.show_cpuinfo		= qemu_ibm_cpuinfo,
 	.init_IRQ		= qemu_init_IRQ,
 /* 	.pcibios_fixup		= qemu_pcibios_fixup, */
-/*	.restart		= qemu_restart, */
+	.restart		= qemu_restart,
 /*	.power_off		= qemu_halt, */
 /*	.halt			= qemu_halt, */
 /* 	.time_init		= todc_time_init, */
