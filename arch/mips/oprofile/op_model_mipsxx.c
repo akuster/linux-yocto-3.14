@@ -136,6 +136,17 @@ __define_perf_accessors(perfctrl, 1, 3)
 __define_perf_accessors(perfctrl, 2, 0)
 __define_perf_accessors(perfctrl, 3, 1)
 
+
+/* These two defines are only appropriate for qemu-system-mips.
+   They prevent illegal writes to performance registers and allow
+   oprofile timer mode to continue and be initialized fully.
+
+   This should not merge to a common location, and only be applied
+   to emulated boards.
+*/
+#define w_c0_perfctrl0(reg) {}
+#define w_c0_perfcntr0(reg) {}
+
 struct op_mips_model op_model_mipsxx_ops;
 
 static struct mipsxx_register_config {
