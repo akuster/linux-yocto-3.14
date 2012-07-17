@@ -1349,7 +1349,9 @@ static int m25p_probe(struct spi_device *spi)
 	/* partitions should match sector boundaries; and it may be good to
 	 * use readonly partitions for writeprotected sectors (BP2..BP0).
 	 */
-	return mtd_device_parse_register(&flash->mtd, NULL, &ppdata,
+	return mtd_device_parse_register(&flash->mtd,
+			data ? data->part_probes : NULL,
+			&ppdata,
 			data ? data->parts : NULL,
 			data ? data->nr_parts : 0);
 }
