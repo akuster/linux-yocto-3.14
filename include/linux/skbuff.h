@@ -1933,6 +1933,10 @@ void *netdev_alloc_frag(unsigned int fragsz);
 struct sk_buff *__netdev_alloc_skb(struct net_device *dev, unsigned int length,
 				   gfp_t gfp_mask);
 
+extern struct sk_buff *__netdev_alloc_skb_ip_align(struct net_device *dev,
+		unsigned int length, gfp_t gfp);
+
+
 /**
  *	netdev_alloc_skb - allocate an skbuff for rx on a specific device
  *	@dev: network device to receive on
@@ -1965,16 +1969,6 @@ static inline struct sk_buff *dev_alloc_skb(unsigned int length)
 	return netdev_alloc_skb(NULL, length);
 }
 
-
-static inline struct sk_buff *__netdev_alloc_skb_ip_align(struct net_device *dev,
-		unsigned int length, gfp_t gfp)
-{
-	struct sk_buff *skb = __netdev_alloc_skb(dev, length + NET_IP_ALIGN, gfp);
-
-	if (NET_IP_ALIGN && skb)
-		skb_reserve(skb, NET_IP_ALIGN);
-	return skb;
-}
 
 static inline struct sk_buff *netdev_alloc_skb_ip_align(struct net_device *dev,
 		unsigned int length)
