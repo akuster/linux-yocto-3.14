@@ -25,6 +25,8 @@ enum ath79_mach_type {
 	ATH79_MACH_UBNT_BULLET_M,	/* Ubiquiti Bullet M */
 	ATH79_MACH_UBNT_NANO_M, 	/* Ubiquiti NanoStation M */
 	ATH79_MACH_UBNT_ROCKET_M,	/* Ubiquiti Rocket M */
+	ATH79_MACH_UBNT_RSPRO,		/* Ubiquiti RouterStation Pro */
+	ATH79_MACH_UBNT_RS,		/* Ubiquiti RouterStation */
 	ATH79_MACH_UBNT_UNIFI, 		/* Ubiquiti Unifi */
 	ATH79_MACH_UBNT_XM,		/* Ubiquiti Networks XM board rev 1.0 */
 };
