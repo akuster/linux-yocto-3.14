@@ -58,12 +58,18 @@ static struct gpio_keys_button ap121_gpio_keys[] __initdata = {
 	}
 };
 
+static struct ath79_spi_controller_data ap121_spi0_data = {
+	.cs_type = ATH79_SPI_CS_TYPE_INTERNAL,
+	.cs_line = 0,
+};
+
 static struct spi_board_info ap121_spi_info[] = {
 	{
 		.bus_num	= 0,
 		.chip_select	= 0,
 		.max_speed_hz	= 25000000,
 		.modalias	= "mx25l1606e",
+		.controller_data = &ap121_spi0_data,
 	}
 };
 

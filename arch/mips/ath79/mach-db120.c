@@ -76,12 +76,18 @@ static struct gpio_keys_button db120_gpio_keys[] __initdata = {
 	},
 };
 
+static struct ath79_spi_controller_data db120_spi0_data = {
+	.cs_type = ATH79_SPI_CS_TYPE_INTERNAL,
+	.cs_line = 0,
+};
+
 static struct spi_board_info db120_spi_info[] = {
 	{
 		.bus_num	= 0,
 		.chip_select	= 0,
 		.max_speed_hz	= 25000000,
 		.modalias	= "s25sl064a",
+		.controller_data = &db120_spi0_data,
 	}
 };
 
