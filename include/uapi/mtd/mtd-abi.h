@@ -202,6 +202,7 @@ struct otp_info {
  * without OOB, e.g., NOR flash.
  */
 #define MEMWRITE		_IOWR('M', 24, struct mtd_write_req)
+#define MTDREFRESH		_IO('M', 50)
 
 /*
  * Obsolete legacy interface. Keep it in order not to break userspace

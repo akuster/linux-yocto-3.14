@@ -993,6 +993,12 @@ static int mtdchar_ioctl(struct file *file, u_int cmd, u_long arg)
 		break;
 	}
 
+	case MTDREFRESH:
+	{
+		ret = mtd_device_refresh(mtd);
+		break;
+	}
+
 	default:
 		ret = -ENOTTY;
 	}
