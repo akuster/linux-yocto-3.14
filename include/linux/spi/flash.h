@@ -25,6 +25,7 @@ struct flash_platform_data {
 
 	char		*type;
 
+	size_t		max_read_len;
 	/* we'll likely add more ... use JEDEC IDs, etc */
 };
 
