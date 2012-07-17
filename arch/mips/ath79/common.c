@@ -22,6 +22,7 @@
 #include "common.h"
 
 static DEFINE_SPINLOCK(ath79_device_reset_lock);
+static DEFINE_MUTEX(ath79_flash_mutex);
 
 u32 ath79_cpu_freq;
 EXPORT_SYMBOL_GPL(ath79_cpu_freq);
@@ -111,3 +112,15 @@ void ath79_device_reset_clear(u32 mask)
 	spin_unlock_irqrestore(&ath79_device_reset_lock, flags);
 }
 EXPORT_SYMBOL_GPL(ath79_device_reset_clear);
+
+void ath79_flash_acquire(void)
+{
+	mutex_lock(&ath79_flash_mutex);
+}
+EXPORT_SYMBOL_GPL(ath79_flash_acquire);
+
+void ath79_flash_release(void)
+{
+	mutex_unlock(&ath79_flash_mutex);
+}
+EXPORT_SYMBOL_GPL(ath79_flash_release);
