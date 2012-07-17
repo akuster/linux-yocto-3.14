@@ -608,11 +608,14 @@ static int m25p80_write(struct mtd_info *mtd, loff_t to, size_t len,
 	spi_message_init(&m);
 	memset(t, 0, (sizeof t));
 
+	t[0].type = SPI_TRANSFER_FLASH_READ_CMD;
 	t[0].tx_buf = flash->command;
 	t[0].len = m25p_cmdsz(flash);
 	spi_message_add_tail(&t[0], &m);
 
 	t[1].tx_buf = buf;
+	t[1].type = SPI_TRANSFER_FLASH_READ_DATA;
+
 	spi_message_add_tail(&t[1], &m);
 
 	mutex_lock(&flash->lock);

@@ -180,6 +180,34 @@ void ath79_gpio_function_disable(u32 mask)
 	ath79_gpio_function_setup(0, mask);
 }
 
+void __init ath79_gpio_output_select(unsigned gpio, u8 val)
+{
+	void __iomem *base = ath79_gpio_base;
+	unsigned long flags;
+	unsigned int reg;
+	u32 t, s;
+
+	BUG_ON(!soc_is_ar934x());
+
+	if (gpio >= AR934X_GPIO_COUNT)
+		return;
+
+	reg = AR934X_GPIO_REG_OUT_FUNC0 + 4 * (gpio / 4);
+	s = 8 * (gpio % 4);
+
+	spin_lock_irqsave(&ath79_gpio_lock, flags);
+
+	t = __raw_readl(base + reg);
+	t &= ~(0xff << s);
+	t |= val << s;
+	__raw_writel(t, base + reg);
+
+	/* flush write */
+	(void) __raw_readl(base + reg);
+
+	spin_unlock_irqrestore(&ath79_gpio_lock, flags);
+}
+
 void __init ath79_gpio_init(void)
 {
 	int err;
