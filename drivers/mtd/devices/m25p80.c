@@ -91,6 +91,12 @@
 
 #define JEDEC_MFR(_jedec_id)	((_jedec_id) >> 16)
 
+#ifdef CONFIG_M25PXX_PREFER_SMALL_SECTOR_ERASE
+#define PREFER_SMALL_SECTOR_ERASE 1
+#else
+#define PREFER_SMALL_SECTOR_ERASE 0
+#endif
+
 /****************************************************************************/
 
 enum read_type {
@@ -1194,7 +1200,7 @@ static int m25p_probe(struct spi_device *spi)
 		flash->mtd._write = m25p80_write;
 
 	/* prefer "small sector" erase if possible */
-	if (info->flags & SECT_4K) {
+	if (PREFER_SMALL_SECTOR_ERASE && (info->flags & SECT_4K)) {
 		flash->erase_opcode = OPCODE_BE_4K;
 		flash->mtd.erasesize = 4096;
 	} else if (info->flags & SECT_4K_PMC) {
