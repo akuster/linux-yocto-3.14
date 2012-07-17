@@ -245,6 +245,7 @@ static int _open_bdev(struct block2mtd_dev *dev)
 		/* We might not have rootfs mounted at this point. Try
 		   to resolve the device name by other means. */
 
+		wait_for_device_probe();
 		devt = name_to_dev_t(dev->devname);
 		if (devt)
 			bdev = blkdev_get_by_dev(devt, mode, dev);
