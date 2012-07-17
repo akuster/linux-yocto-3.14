@@ -142,6 +142,7 @@ static inline u32 ath79_reset_rr(unsigned reg)
 
 void ath79_device_reset_set(u32 mask);
 void ath79_device_reset_clear(u32 mask);
+u32 ath79_device_reset_get(u32 mask);
 
 void ath79_flash_acquire(void);
 void ath79_flash_release(void);
