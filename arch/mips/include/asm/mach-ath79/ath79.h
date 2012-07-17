@@ -116,6 +116,7 @@ static inline int soc_is_qca955x(void)
 }
 
 extern void __iomem *ath79_ddr_base;
+extern void __iomem *ath79_gpio_base;
 extern void __iomem *ath79_pll_base;
 extern void __iomem *ath79_reset_base;
 

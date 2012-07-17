@@ -25,7 +25,9 @@
 #include <asm/mach-ath79/ath79.h>
 #include "common.h"
 
-static void __iomem *ath79_gpio_base;
+void __iomem *ath79_gpio_base;
+EXPORT_SYMBOL_GPL(ath79_gpio_base);
+
 static unsigned long ath79_gpio_count;
 static DEFINE_SPINLOCK(ath79_gpio_lock);
 
