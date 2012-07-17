@@ -475,6 +475,12 @@ extern struct spi_master *spi_busnum_to_master(u16 busnum);
 
 /*---------------------------------------------------------------------------*/
 
+enum spi_transfer_type {
+	SPI_TRANSFER_GENERIC = 0,
+	SPI_TRANSFER_FLASH_READ_CMD,
+	SPI_TRANSFER_FLASH_READ_DATA,
+};
+
 /*
  * I/O INTERFACE between SPI controller and protocol drivers
  *
@@ -591,6 +597,7 @@ struct spi_transfer {
 	u8		bits_per_word;
 	u16		delay_usecs;
 	u32		speed_hz;
+	enum spi_transfer_type type;
 
 	struct list_head transfer_list;
 };
