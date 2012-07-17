@@ -13,6 +13,7 @@
  */
 
 #include <linux/init.h>
+#include <linux/export.h>
 #include <linux/pci.h>
 #include <linux/resource.h>
 #include <linux/platform_device.h>
@@ -24,6 +25,9 @@
 static int (*ath79_pci_plat_dev_init)(struct pci_dev *dev);
 static const struct ath79_pci_irq *ath79_pci_irq_map __initdata;
 static unsigned ath79_pci_nr_irqs __initdata;
+
+static unsigned long (*__ath79_pci_swizzle_b)(unsigned long port);
+static unsigned long (*__ath79_pci_swizzle_w)(unsigned long port);
 
 static const struct ath79_pci_irq ar71xx_pci_irq_map[] __initconst = {
 	{
@@ -212,12 +216,50 @@ ath79_register_pci_ar724x(int id,
 	return pdev;
 }
 
+static inline bool ar71xx_is_pci_addr(unsigned long port)
+{
+	unsigned long phys = CPHYSADDR(port);
+
+	return (phys >= AR71XX_PCI_MEM_BASE &&
+		phys < AR71XX_PCI_MEM_BASE + AR71XX_PCI_MEM_SIZE);
+}
+
+static unsigned long ar71xx_pci_swizzle_b(unsigned long port)
+{
+	return ar71xx_is_pci_addr(port) ? port ^ 3 : port;
+}
+
+static unsigned long ar71xx_pci_swizzle_w(unsigned long port)
+{
+	return ar71xx_is_pci_addr(port) ? port ^ 2 : port;
+}
+
+unsigned long ath79_pci_swizzle_b(unsigned long port)
+{
+	if (__ath79_pci_swizzle_b)
+		return __ath79_pci_swizzle_b(port);
+
+	return port;
+}
+EXPORT_SYMBOL(ath79_pci_swizzle_b);
+
+unsigned long ath79_pci_swizzle_w(unsigned long port)
+{
+	if (__ath79_pci_swizzle_w)
+		return __ath79_pci_swizzle_w(port);
+
+	return port;
+}
+EXPORT_SYMBOL(ath79_pci_swizzle_w);
+
 int __init ath79_register_pci(void)
 {
 	struct platform_device *pdev = NULL;
 
 	if (soc_is_ar71xx()) {
 		pdev = ath79_register_pci_ar71xx();
+		__ath79_pci_swizzle_b = ar71xx_pci_swizzle_b;
+		__ath79_pci_swizzle_w = ar71xx_pci_swizzle_w;
 	} else if (soc_is_ar724x()) {
 		pdev = ath79_register_pci_ar724x(-1,
 						 AR724X_PCI_CFG_BASE,
