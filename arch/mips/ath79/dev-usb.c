@@ -15,6 +15,7 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/irq.h>
+#include <linux/gpio.h>
 #include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
 #include <linux/usb/ehci_pdriver.h>
@@ -239,4 +240,25 @@ void __init ath79_register_usb(void)
 		qca955x_usb_setup();
 	else
 		BUG();
+}
+
+void __init ath79_set_usb_power_gpio(unsigned int gpio, unsigned long flags,
+				     const char *label)
+{
+	int err;
+
+	err = gpio_request_one(gpio, flags, label);
+	if (err) {
+		pr_err("ath79: can't setup GPIO%u (%s), err=%d\n",
+			gpio, label, err);
+		return;
+	}
+
+	err = gpio_export(gpio, false);
+	if (err) {
+		pr_err("ath79: can't export GPIO%u (%s), err=%d\n",
+			gpio, label, err);
+	}
+
+	return;
 }

@@ -13,5 +13,7 @@
 #define _ATH79_DEV_USB_H
 
 void ath79_register_usb(void);
+void ath79_set_usb_power_gpio(unsigned int gpio, unsigned long flags,
+			      const char *label);
 
 #endif /* _ATH79_DEV_USB_H */
