@@ -47,6 +47,7 @@
 #define	OPCODE_BE_4K_PMC	0xd7	/* Erase 4KiB block on PMC chips */
 #define	OPCODE_BE_32K		0x52	/* Erase 32KiB block */
 #define	OPCODE_CHIP_ERASE	0xc7	/* Erase whole flash chip */
+#define	OPCODE_BE_4K_PMC	0xd7	/* Erase 4KiB block on PMC chips*/
 #define	OPCODE_SE		0xd8	/* Sector erase (usually 64KiB) */
 #define	OPCODE_RDID		0x9f	/* Read JEDEC ID */
 #define	OPCODE_RDCR             0x35    /* Read configuration register */
@@ -1194,6 +1195,9 @@ static int m25p_probe(struct spi_device *spi)
 	/* prefer "small sector" erase if possible */
 	if (info->flags & SECT_4K) {
 		flash->erase_opcode = OPCODE_BE_4K;
+		flash->mtd.erasesize = 4096;
+	} else if (info->flags & SECT_4K_PMC) {
+		flash->erase_opcode = OPCODE_BE_4K_PMC;
 		flash->mtd.erasesize = 4096;
 	} else if (info->flags & SECT_4K_PMC) {
 		flash->erase_opcode = OPCODE_BE_4K_PMC;
