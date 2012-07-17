@@ -70,6 +70,35 @@ static const char * __init ath79_prom_find_env(char **envp, const char *name)
 	return ret;
 }
 
+#ifdef CONFIG_IMAGE_CMDLINE_HACK
+extern char __image_cmdline[];
+
+static int __init ath79_use_image_cmdline(void)
+{
+	char *p = __image_cmdline;
+	int replace = 0;
+
+	if (*p == '-') {
+		replace = 1;
+		p++;
+	}
+
+	if (*p == '\0')
+		return 0;
+
+	if (replace) {
+		strlcpy(arcs_cmdline, p, sizeof(arcs_cmdline));
+	} else {
+		strlcat(arcs_cmdline, " ", sizeof(arcs_cmdline));
+		strlcat(arcs_cmdline, p, sizeof(arcs_cmdline));
+	}
+
+	return 1;
+}
+#else
+static inline int ath79_use_image_cmdline(void) { return 0; }
+#endif
+
 static int __init ath79_prom_init_myloader(void)
 {
 	struct myloader_info *mylo;
@@ -98,12 +127,17 @@ static int __init ath79_prom_init_myloader(void)
 
 	ath79_prom_append_cmdline("ethaddr", mac_buf);
 
+	ath79_use_image_cmdline();
+
 	return 1;
 }
 
 static __init void ath79_prom_init_cmdline(int argc, char **argv)
 {
 	int i;
+
+	if (ath79_use_image_cmdline())
+		return;
 
 	if (!is_valid_ram_addr(argv))
 		return;
