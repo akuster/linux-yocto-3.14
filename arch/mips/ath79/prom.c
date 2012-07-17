@@ -16,6 +16,7 @@
 
 #include <asm/bootinfo.h>
 #include <asm/addrspace.h>
+#include <asm/fw/myloader/myloader.h>
 
 #include "common.h"
 
@@ -69,6 +70,37 @@ static const char * __init ath79_prom_find_env(char **envp, const char *name)
 	return ret;
 }
 
+static int __init ath79_prom_init_myloader(void)
+{
+	struct myloader_info *mylo;
+	char mac_buf[32];
+	unsigned char *mac;
+
+	mylo = myloader_get_info();
+	if (!mylo)
+		return 0;
+
+	switch (mylo->did) {
+	case DEVID_COMPEX_WP543:
+		ath79_prom_append_cmdline("board", "WP543");
+		break;
+	case DEVID_COMPEX_WPE72:
+		ath79_prom_append_cmdline("board", "WPE72");
+		break;
+	default:
+		pr_warn("prom: unknown device id: %x\n", mylo->did);
+		return 0;
+	}
+
+	mac = mylo->macs[0];
+	snprintf(mac_buf, sizeof(mac_buf), "%02x:%02x:%02x:%02x:%02x:%02x",
+		 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+
+	ath79_prom_append_cmdline("ethaddr", mac_buf);
+
+	return 1;
+}
+
 static __init void ath79_prom_init_cmdline(int argc, char **argv)
 {
 	int i;
@@ -87,6 +119,9 @@ void __init prom_init(void)
 {
 	const char *env;
 	char **envp;
+
+	if (ath79_prom_init_myloader())
+		return;
 
 	ath79_prom_init_cmdline(fw_arg0, (char **)fw_arg1);
 
