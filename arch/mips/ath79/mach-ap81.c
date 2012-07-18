@@ -98,7 +98,7 @@ static void __init ap81_setup(void)
 					ap81_gpio_keys);
 	ath79_register_spi(&ap81_spi_data, ap81_spi_info,
 			   ARRAY_SIZE(ap81_spi_info));
-	ath79_register_wmac(cal_data);
+	ath79_register_wmac(cal_data, NULL);
 	ath79_register_usb();
 }
 

@@ -15,6 +15,7 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/irq.h>
+#include <linux/etherdevice.h>
 #include <linux/platform_device.h>
 #include <linux/ath9k_platform.h>
 
@@ -22,6 +23,7 @@
 #include <asm/mach-ath79/ar71xx_regs.h>
 #include "dev-wmac.h"
 
+static u8 ath79_wmac_mac[ETH_ALEN];
 static struct ath9k_platform_data ath79_wmac_data;
 
 static struct resource ath79_wmac_resources[] = {
@@ -134,7 +136,7 @@ static void qca955x_wmac_setup(void)
 		ath79_wmac_data.is_clk_25mhz = true;
 }
 
-void __init ath79_register_wmac(u8 *cal_data)
+void __init ath79_register_wmac(u8 *cal_data, u8 *mac_addr)
 {
 	if (soc_is_ar913x())
 		ar913x_wmac_setup();
@@ -150,6 +152,11 @@ void __init ath79_register_wmac(u8 *cal_data)
 	if (cal_data)
 		memcpy(ath79_wmac_data.eeprom_data, cal_data,
 		       sizeof(ath79_wmac_data.eeprom_data));
+
+	if (mac_addr) {
+		memcpy(ath79_wmac_mac, mac_addr, sizeof(ath79_wmac_mac));
+		ath79_wmac_data.macaddr = ath79_wmac_mac;
+	}
 
 	platform_device_register(&ath79_wmac_device);
 }

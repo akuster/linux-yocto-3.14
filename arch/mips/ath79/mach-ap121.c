@@ -91,7 +91,7 @@ static void __init ap121_setup(void)
 	ath79_register_spi(&ap121_spi_data, ap121_spi_info,
 			   ARRAY_SIZE(ap121_spi_info));
 	ath79_register_usb();
-	ath79_register_wmac(cal_data);
+	ath79_register_wmac(cal_data, NULL);
 }
 
 MIPS_MACHINE(ATH79_MACH_AP121, "AP121", "Atheros AP121 reference board",
