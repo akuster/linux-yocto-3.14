@@ -54,7 +54,7 @@ struct mtd_part {
  * the pointer to that structure with this macro.
  */
 #define PART(x)  ((struct mtd_part *)(x))
-#define IS_PART(mtd) (mtd->read == part_read)
+#define IS_PART(mtd) (mtd->_read == part_read)
 
 /*
  * MTD methods which simply translate the effective address and pass through
@@ -296,13 +296,13 @@ void mtd_erase_callback(struct erase_info *instr)
 
 		if (instr->mtd->flags & MTD_ERASE_PARTIAL) {
 			if (instr->partial_start) {
-				part->master->write(part->master,
+				part->master->_write(part->master,
 					instr->addr, instr->erase_buf_ofs,
 					&wrlen, instr->erase_buf);
 				instr->addr += instr->erase_buf_ofs;
 			} else {
 				instr->len -= instr->erase_buf_ofs;
-				part->master->write(part->master,
+				part->master->_write(part->master,
 					instr->addr + instr->len,
 					instr->erase_buf_ofs, &wrlen,
 					instr->erase_buf +
@@ -704,7 +704,7 @@ static int split_squashfs(struct mtd_info *master, int offset, int *split_offset
 	struct squashfs_super_block sb;
 	int len, ret;
 
-	ret = master->read(master, offset, sizeof(sb), &len, (void *) &sb);
+	ret = master->_read(master, offset, sizeof(sb), &len, (void *) &sb);
 	if (ret || (len != sizeof(sb))) {
 		printk(KERN_ALERT "split_squashfs: error occured while reading "
 			"from \"%s\"\n", master->name);

@@ -72,7 +72,7 @@ static int myloader_parse_partitions(struct mtd_info *master,
 		printk(KERN_DEBUG "%s: searching for MyLoader partition table"
 				" at offset 0x%lx\n", master->name, offset);
 
-		ret = master->read(master, offset, sizeof(*buf), &retlen,
+		ret = master->_read(master, offset, sizeof(*buf), &retlen,
 					(void *)buf);
 		if (ret)
 			goto out_free_buf;
