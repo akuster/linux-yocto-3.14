@@ -431,7 +431,9 @@ static int __init mipsxx_init(void)
 	}
 
 	save_perf_irq = perf_irq;
+#if 0
 	perf_irq = mipsxx_perfcount_handler;
+#endif
 
 	if ((cp0_perfcount_irq >= 0) && (cp0_compare_irq != cp0_perfcount_irq))
 		return request_irq(cp0_perfcount_irq, mipsxx_perfcount_int,
