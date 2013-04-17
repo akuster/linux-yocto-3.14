@@ -1056,7 +1056,7 @@ static const struct net_device_ops ag71xx_netdev_ops = {
 #endif
 };
 
-static int __devinit ag71xx_probe(struct platform_device *pdev)
+static int ag71xx_probe(struct platform_device *pdev)
 {
 	struct net_device *dev;
 	struct resource *res;
@@ -1188,7 +1188,7 @@ err_out:
 	return err;
 }
 
-static int __devexit ag71xx_remove(struct platform_device *pdev)
+static int ag71xx_remove(struct platform_device *pdev)
 {
 	struct net_device *dev = platform_get_drvdata(pdev);
 
