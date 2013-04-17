@@ -875,7 +875,7 @@ static int swconfig_dump_switches(struct sk_buff *skb,
 	list_for_each_entry(dev, &swdevs, dev_list) {
 		if (++idx <= start)
 			continue;
-		if (swconfig_send_switch(skb, NETLINK_CB(cb->skb).pid,
+		if (swconfig_send_switch(skb, NETLINK_CB(cb->skb).portid,
 				cb->nlh->nlmsg_seq, NLM_F_MULTI,
 				dev) < 0)
 			break;
