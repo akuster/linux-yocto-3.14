@@ -347,7 +347,6 @@ static int beagle_twl_gpio_setup(struct device *dev,
 	phy_data[0].vcc_gpio = gpio + TWL4030_GPIO_MAX;
 	phy_data[0].vcc_polarity = beagle_config.usb_pwr_level;
 
-	usbhs_init_phys(phy_data, ARRAY_SIZE(phy_data));
 	return 0;
 }
 
@@ -561,10 +560,11 @@ static void __init omap3_beagle_init(void)
 	omap_sdrc_init(mt46h32m32lf6_sdrc_params,
 				  mt46h32m32lf6_sdrc_params);
 
+	usbhs_init_phys(phy_data, ARRAY_SIZE(phy_data));
+	usbhs_init(&usbhs_bdata);
+	
 	usb_bind_phy("musb-hdrc.0.auto", 0, "twl4030_usb");
 	usb_musb_init(NULL);
-
-	usbhs_init(&usbhs_bdata);
 
 	board_nand_init(omap3beagle_nand_partitions,
 			ARRAY_SIZE(omap3beagle_nand_partitions), NAND_CS,
