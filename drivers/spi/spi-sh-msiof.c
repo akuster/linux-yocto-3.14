@@ -144,8 +144,7 @@ static struct {
 };
 
 static void sh_msiof_spi_set_clk_regs(struct sh_msiof_spi_priv *p,
-				      unsigned long parent_rate,
-				      unsigned long spi_hz)
+				      unsigned long parent_rate, u32 spi_hz)
 {
 	unsigned long div = 1024;
 	size_t k;
@@ -372,10 +371,9 @@ static int sh_msiof_spi_bits(struct spi_device *spi, struct spi_transfer *t)
 	return bits;
 }
 
-static unsigned long sh_msiof_spi_hz(struct spi_device *spi,
-				     struct spi_transfer *t)
+static u32 sh_msiof_spi_hz(struct spi_device *spi, struct spi_transfer *t)
 {
-	unsigned long hz;
+	u32 hz;
 
 	hz = t ? t->speed_hz : 0;
 	if (!hz)
