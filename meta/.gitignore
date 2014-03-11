@@ -1,0 +1,5 @@
+top_tgt
+*.pre
+*.sanitized
+cfg/*
+!cfg/kernel-cache/

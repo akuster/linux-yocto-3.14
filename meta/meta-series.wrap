@@ -1,0 +1,394 @@
+#
+# scc v0.2
+# processed: Mon Mar 10 23:37:54 EDT 2014
+#
+# This is a scc output file, do not edit
+#
+_reloc_dir /home/bruce/poky-kernel/new-repo/meta/cfg
+   # _mark sys940x-standard.scc start
+_define KMACHINE 'sys940x'
+_define KTYPE 'standard'
+_define KARCH 'i386'
+   # _mark standard.scc start
+   # _mark base.scc start
+_define KERNEL_VERSION '3.8'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/ktypes/base/base.cfg
+   # _mark base.scc end
+_branch_begin standard
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/ktypes/standard/standard.cfg
+   # _mark kgdb.scc start
+_define KFEATURE_DESCRIPTION 'Enable KGDB + KGDB access protocols'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/kgdb/kgdb.cfg
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/kgdb/kgdb-x86.cfg
+   # _mark kgdb.scc end
+   # _mark firmware.scc start
+_define KFEATURE_DESCRIPTION 'Firmware Loading Support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/firmware/firmware.cfg
+   # _mark firmware.scc end
+   # _mark omap.scc start
+   # _mark omap.scc end
+   # _mark lttng.scc start
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/lttng/lttng.cfg
+   # _mark lttng.scc end
+   # _mark blktrace.scc start
+_define KFEATURE_DESCRIPTION 'Enable blktrace'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/blktrace/blktrace.cfg
+   # _mark blktrace.scc end
+   # _mark systemtap.scc start
+_define KFEATURE_DESCRIPTION 'Enable options required for systemtap support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/systemtap/systemtap.cfg
+   # _mark kprobes.scc start
+_define KFEATURE_DESCRIPTION 'Enable options required for kprobes support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/kprobes/kprobes.cfg
+   # _mark kprobes.scc end
+   # _mark uprobe-enable.scc start
+_define KFEATURE_DESCRIPTION 'Enable options required for uprobes support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/uprobe/uprobe.cfg
+   # _mark uprobe-enable.scc end
+   # _mark systemtap.scc end
+   # _mark utrace.scc start
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/utrace/utrace.cfg
+   # _mark utrace.scc end
+   # _mark seccomp.scc start
+   # _mark seccomp.scc end
+   # _mark arm.scc start
+   # _mark v7-A15.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/arch/arm/v7-A15/ARM-LPAE-Invalidate-the-TLB-for-module-addresses-dur.patch
+   # _mark v7-A15.scc end
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/arch/arm/arm-ARM-EABI-socketcall.patch
+   # _mark arm.scc end
+   # _mark mips.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/arch/mips/malta-uhci-quirks-make-allowance-for-slow-4k-e-c.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/arch/mips/4kc-cache-tlb-hazard-tlbp-cache-coherency.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/arch/mips/mips-support-preemptible-kernel.patch
+   # _mark mips.scc end
+   # _mark powerpc.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/arch/powerpc/powerpc-Add-unwind-information-for-SPE-registers-of-.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/arch/powerpc/powerpc-kexec-fix-for-powerpc64.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/arch/powerpc/powerpc-add-crtsavres.o-to-archprepare-for-kbuild.patch
+   # _mark powerpc.scc end
+   # _mark hrt.scc start
+_define KFEATURE_DESCRIPTION 'Enable High Res timers and Generic Time'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/hrt/hrt.cfg
+   # _mark hrt.scc end
+   # _mark ftrace.scc start
+_define KFEATURE_DESCRIPTION 'Enable Function Tracer'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/ftrace/ftrace.cfg
+   # _mark ftrace.scc end
+   # _mark uprobe.scc start
+_define KFEATURE_DESCRIPTION 'Enable options required for uprobes support'
+_define KFEATURE_COMPATIBILITY 'all'
+   # _mark uprobe-enable.scc start
+_define KFEATURE_DESCRIPTION 'Enable options required for uprobes support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/uprobe/uprobe.cfg
+   # _mark uprobe-enable.scc end
+   # _mark uprobe.scc end
+   # _mark kprobes.scc start
+_define KFEATURE_DESCRIPTION 'Enable options required for kprobes support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/kprobes/kprobes.cfg
+   # _mark kprobes.scc end
+   # _mark patches.scc start
+   # _mark drivers.scc start
+   # _mark drivers.scc end
+   # _mark build.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/build/arm-serialize-build-targets.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/build/powerpc-serialize-image-targets.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/build/kbuild-exclude-meta-directory-from-distclean-processi.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/build/modpost-mask-trivial-warnings.patch
+   # _mark build.scc end
+   # _mark exports.scc start
+   # _mark exports.scc end
+   # _mark boot.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/boot/NFS-allow-nfs-root-mount-to-use-alternate-rpc-ports.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/boot/mount_root-clarify-error-messages-for-when-no-rootfs.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/boot/check-console-device-file-on-fs-when-booting.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/boot/nfs-Allow-default-io-size-to-be-configured.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/boot/powerpc-boot-remove-Os-from-BOOTFLAGS.patch
+   # _mark boot.scc end
+   # _mark net.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/net/Resolve-jiffies-wrapping-about-arp.patch
+   # _mark net.scc end
+   # _mark debug.scc start
+   # _mark debug.scc end
+   # _mark misc.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/misc/vmware-include-jiffies.h.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/patches/misc/compiler.h-Undef-before-redefining-__attribute_const.patch
+   # _mark misc.scc end
+   # _mark patches.scc end
+   # _mark initramfs.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/initramfs/initramfs-add-wrapper.patch
+   # _mark initramfs.scc end
+   # _mark yaffs2.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/yaffs2/yaffs2-import-2013-git-3a8580.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/yaffs2/yaffs2-restore-multi-kernel-version-functionality.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/yaffs2/yaffs2-convert-to-kuid_t-and-kgid_t.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/yaffs2/yaffs2-disable-procfs-support.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/yaffs2/Yaffs-check-oob-size-before-auto-selecting-Yaffs1.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/yaffs2/yaffs2-fix-3.12-compilation-issues.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/yaffs2/yaffs2-fix-MTD_BLOCK_MAJOR-compilation-error.patch
+   # _mark yaffs2.scc end
+   # _mark aufs.scc start
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/aufs/aufs.cfg
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/aufs/aufs-aufs3-kbuild.patch.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/aufs/aufs-aufs3-kbuild.patch.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/aufs/aufs-aufs3-mmap.patch.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/aufs/aufs-aufs3-standalone.patch.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/aufs/aufs-core-aufs-filesystem.patch
+   # _mark aufs.scc end
+   # _mark cgroups.scc start
+_define KFEATURE_DESCRIPTION 'Enable cgroups and selected controllers                              namespaces and associated functionality'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/cgroups/cgroups.cfg
+   # _mark namespaces.scc start
+_define KFEATURE_DESCRIPTION 'Enable namespace support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/namespaces/namespaces.cfg
+   # _mark namespaces.scc end
+   # _mark cgroups.scc end
+   # _mark net_sched.scc start
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/net_sched/net_sched.cfg
+   # _mark net_sched.scc end
+   # _mark kexec.scc start
+   # _mark kexec.scc end
+   # _mark cryptodev.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/cryptodev/crypto-import-cryptodev-linux-1.6.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/cryptodev/cryptodev-add-Kbuild-hooks.patch
+   # _mark cryptodev.scc end
+   # _mark vfat.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/vfat/FAT-Add-CONFIG_VFAT_FS_NO_DUALNAMES-option.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/vfat/FAT-Add-CONFIG_VFAT_NO_CREATE_WITH_LONGNAMES-option.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/vfat/FAT-Added-FAT_NO_83NAME.patch
+   # _mark vfat.scc end
+   # _mark kvm.scc start
+   # _mark kvm.scc end
+   # _mark tipc.scc start
+   # _mark tipc.scc end
+   # _mark xip.scc start
+   # _mark xip.scc end
+   # _mark oprofile.scc start
+   # _mark oprofile.scc end
+   # _mark ramconsole.scc start
+_define KFEATURE_DESCRIPTION 'Android RAM buffer console'
+_define KFEATURE_COMPATIBILITY 'all'
+   # _mark ramconsole.scc end
+   # _mark fuse.scc start
+_define KFEATURE_DESCRIPTION 'Enable core FUSE functionality'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/fuse/fuse.cfg
+   # _mark fuse.scc end
+   # _mark 8250.scc start
+_define KFEATURE_DESCRIPTION 'Enable 8250 serial support'
+_define KFEATURE_COMPATIBILITY 'board'
+   # _mark 8250.scc end
+   # _mark uptime.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/uptime/uptime-allow-the-optional-limiting-of-kernel-runtime.patch
+   # _mark uptime.scc end
+   # _mark ktest.scc start
+   # _mark ktest.scc end
+   # _mark perf.scc start
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-force-include-of-stdbool.h.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-use-pkg-config-instead-of-python-config.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-add-libperl-not-found-warning.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-change-root-to-prefix-for-python-install.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-add-sgidefs.h-to-for-mips-builds.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-add-SLANG_INC-for-slang.h.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-annotate-replace-expand-with-equivalent-sed-exp.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-fix-bench-numa-compilation.patch
+_patch /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/perf/perf-mips64-Convert-__u64-to-unsigned-long-long.patch
+   # _mark perf.scc end
+   # _mark input.scc start
+_define KFEATURE_DESCRIPTION 'Enable input devices'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/input/input.cfg
+   # _mark input.scc end
+   # _mark devtmpfs.scc start
+_define KFEATURE_DESCRIPTION 'Enable devtmpfs for tmpfs/ramfs support at early bootup'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/fs/devtmpfs.cfg
+   # _mark devtmpfs.scc end
+   # _mark debugfs.scc start
+_define KFEATURE_DESCRIPTION 'Enable debugfs support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/fs/debugfs.cfg
+   # _mark debugfs.scc end
+   # _mark btrfs.scc start
+_define KFEATURE_DESCRIPTION 'Enable brtfs filesystem support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/fs/btrfs.cfg
+   # _mark btrfs.scc end
+   # _mark ext2.scc start
+_define KFEATURE_DESCRIPTION 'Enable Extended2 (ext2) filesystem support'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/fs/ext2.cfg
+   # _mark ext2.scc end
+   # _mark ext3.scc start
+_define KFEATURE_DESCRIPTION 'Enable the Extended 3 (ext3) filesystem'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/fs/ext3.cfg
+   # _mark ext3.scc end
+   # _mark ext4.scc start
+_define KFEATURE_DESCRIPTION 'Enable the Extended 4 (ext4) filesystem'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/fs/ext4.cfg
+   # _mark ext4.scc end
+   # _mark ipsec.scc start
+_define KFEATURE_DESCRIPTION 'Enable IPsec options'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/net/ipsec.cfg
+   # _mark ipsec.scc end
+   # _mark ipv6.scc start
+_define KFEATURE_DESCRIPTION 'Enable IPv6 options'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/net/ipv6.cfg
+   # _mark ipsec6.scc start
+_define KFEATURE_DESCRIPTION 'Enable IPv6 IPsec options'
+_define KFEATURE_COMPATIBILITY 'all'
+   # _mark ipsec.scc start
+_define KFEATURE_DESCRIPTION 'Enable IPsec options'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/net/ipsec.cfg
+   # _mark ipsec.scc end
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/net/ipsec6.cfg
+   # _mark ipsec6.scc end
+   # _mark ipv6.scc end
+   # _mark ip_nf.scc start
+_define KFEATURE_DESCRIPTION 'Enable Netfilter (IPv4) options'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/net/ip_nf.cfg
+   # _mark ip_nf.scc end
+   # _mark ip6_nf.scc start
+_define KFEATURE_DESCRIPTION 'Enable Netfilter (IPv6) options'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/net/ip6_nf.cfg
+   # _mark ip6_nf.scc end
+   # _mark bridge.scc start
+_define KFEATURE_DESCRIPTION 'Enable Bridge Netfilter options'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/net/bridge.cfg
+   # _mark bridge.scc end
+   # _mark systemd.scc start
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/systemd.cfg
+   # _mark systemd.scc end
+   # _mark rfkill.scc start
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/rfkill/rfkill.cfg
+   # _mark rfkill.scc end
+   # _mark standard.scc end
+_branch_begin sys940x
+   # _mark sys940x.scc start
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/bsp/sys940x/sys940x.cfg
+   # _mark x86.scc start
+   # _mark efi.scc start
+_define KFEATURE_DESCRIPTION 'Core EFI support'
+_define KFEATURE_COMPATIBILITY 'arch'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/efi.cfg
+   # _mark efi.scc end
+   # _mark smp.scc start
+_define KFEATURE_DESCRIPTION 'Enable SMP'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/smp.cfg
+   # _mark smp.scc end
+   # _mark hpet.scc start
+_define KFEATURE_DESCRIPTION 'HPET Timer Support'
+_define KFEATURE_COMPATIBILITY 'arch'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/timer/hpet.cfg
+   # _mark hpet.scc end
+   # _mark no_hz.scc start
+_define KFEATURE_DESCRIPTION 'Enable CONFIG_NO_HZ'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/timer/no_hz.cfg
+   # _mark no_hz.scc end
+   # _mark hz_1000.scc start
+_define KFEATURE_DESCRIPTION 'Enable 1000Hz Timer frequency'
+_define KFEATURE_COMPATIBILITY 'all'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/timer/hz_1000.cfg
+   # _mark hz_1000.scc end
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/x86.cfg
+   # _mark x86.scc end
+   # _mark eg20t.scc start
+_define KFEATURE_DESCRIPTION 'Enable Support for Platform Controller Hub EG20T'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/eg20t/eg20t.cfg
+   # _mark eg20t.scc end
+   # _mark dmaengine.scc start
+_define KFEATURE_DESCRIPTION 'Enable dma engine core functionality'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/dmaengine.cfg
+   # _mark dmaengine.scc end
+   # _mark 8250.scc start
+_define KFEATURE_DESCRIPTION 'Enable 8250 serial support'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/8250.cfg
+   # _mark 8250.scc end
+   # _mark usb-mass-storage.scc start
+_define KFEATURE_DESCRIPTION 'Enable options required for USB mass storage devices'
+_define KFEATURE_COMPATIBILITY 'all'
+   # _mark disk.scc start
+_define KFEATURE_DESCRIPTION 'Enable options for SCSI disk support'
+_define KFEATURE_COMPATIBILITY 'board'
+   # _mark scsi.scc start
+_define KFEATURE_DESCRIPTION 'Enable options for SCSI support'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/scsi/scsi.cfg
+   # _mark scsi.scc end
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/scsi/disk.cfg
+   # _mark disk.scc end
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/usb-mass-storage.cfg
+   # _mark usb-mass-storage.scc end
+   # _mark intel.scc start
+_define KFEATURE_DESCRIPTION 'Enable Intel Power Management options'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/power/intel.cfg
+   # _mark intel.scc end
+   # _mark efi.scc start
+_define KFEATURE_DESCRIPTION 'Core EFI support'
+_define KFEATURE_COMPATIBILITY 'arch'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/efi.cfg
+   # _mark efi.scc end
+   # _mark touchscreen-composite.scc start
+_define KFEATURE_DESCRIPTION 'Enable options for the 'composite' USB touchscreen driver'
+_define KFEATURE_COMPATIBILITY 'board'
+   # _mark usb-base.scc start
+_define KFEATURE_DESCRIPTION 'Enable core options for USB support'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/usb/usb-base.cfg
+   # _mark usb-base.scc end
+   # _mark touchscreen.scc start
+_define KFEATURE_DESCRIPTION 'Enable touchscreen input devices'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/input/touchscreen.cfg
+   # _mark touchscreen.scc end
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/usb/touchscreen-composite.cfg
+   # _mark touchscreen-composite.scc end
+   # _mark sys940x.scc end
+   # _mark efi-ext.scc start
+_define KFEATURE_DESCRIPTION 'Enable extended EFI support'
+_define KFEATURE_COMPATIBILITY 'arch'
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/efi.cfg
+_kconf hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/efi-ext.cfg
+   # _mark efi-ext.scc end
+   # _mark boot-live.scc start
+_define KFEATURE_DESCRIPTION 'Live boot support'
+_define KFEATURE_COMPATIBILITY 'arch'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/cfg/boot-live.cfg
+   # _mark boot-live.scc end
+   # _mark latencytop.scc start
+_define KFEATURE_DESCRIPTION 'Enable latencytop'
+_define KFEATURE_COMPATIBILITY 'arch'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/latencytop/latencytop.cfg
+   # _mark latencytop.scc end
+   # _mark profiling.scc start
+_define KFEATURE_DESCRIPTION 'Enable profiling and timerstats'
+_define KFEATURE_COMPATIBILITY 'board'
+_kconf non-hardware /home/bruce/poky-kernel/new-repo/meta/cfg/kernel-cache/features/profiling/profiling.cfg
+   # _mark profiling.scc end
+   # _mark sys940x-standard.scc end
