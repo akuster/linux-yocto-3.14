@@ -1,0 +1,3 @@
+links/kernel-cache/bsp/mti-malta32/mti_malta32-fix-the-pci-resource-conflicts.patch
+links/kernel-cache/bsp/mti-malta32/mousedev-mousedev-patch-for-qemumips.patch
+links/kernel-cache/bsp/mti-malta32/Revert-Input-i8042-io-fix-up-region-handling-on-MIPS.patch

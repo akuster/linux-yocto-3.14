@@ -1,0 +1,5 @@
+links/kernel-cache/bsp/mti-malta32/mti_malta32-fix-the-pci-resource-conflicts.patch
+links/kernel-cache/bsp/mti-malta32/mousedev-mousedev-patch-for-qemumips.patch
+links/kernel-cache/bsp/mti-malta32/Revert-Input-i8042-io-fix-up-region-handling-on-MIPS.patch
+links/kernel-cache/bsp/mti-malta64/0001-oprofile-mips-override-register-writes-for-qemu-mips.patch
+links/kernel-cache/bsp/mti-malta64/oprofile-mips-do-not-set-perf_irq-for-qemu-mips-64.patch

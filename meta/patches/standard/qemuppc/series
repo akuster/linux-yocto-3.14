@@ -1,0 +1,7 @@
+links/kernel-cache/bsp/qemu-ppc32/qemu-platform-v2.patch
+links/kernel-cache/bsp/qemu-ppc32/powerpc-special-load-offset-for-qemu.patch
+links/kernel-cache/bsp/qemu-ppc32/qemu-powerpc-work-around-for-qemu-powerpc-32-interru.patch
+links/kernel-cache/bsp/qemu-ppc32/qemu_ppc32-support-multiple-ethernet-interfaces.patch
+links/kernel-cache/bsp/qemu-ppc32/qemu_ppc-enable-IDE-support.patch
+links/kernel-cache/bsp/qemu-ppc32/qemu-powerpc-Added-qemu_restart-function.patch
+links/kernel-cache/bsp/qemu-ppc32/qemuppc-irq-disable-fixups.patch
