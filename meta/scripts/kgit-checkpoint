@@ -1,0 +1,305 @@
+#!/bin/bash
+
+#  (kgit-checkpoint), (checkpoint and restore for meta-information)
+
+#  Copyright (c) 2008-2012 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+# For consistent behaviour with "grep -w"
+LC_ALL=C
+export LC_ALL
+
+usage()
+{
+cat <<EOF
+
+ kgit-checkpoint -b <target checkpoint branch> 
+                 [-c] [-r] [-d] [-v] <action>
+ 
+   -b:  branch that stores checkpointed files
+   -r:  restore checkpoint commit
+   -c:  create a checkpoint commit
+   -m:  checkpoint message (the date will be used if not supplied)
+   -v:  verbose 
+
+   <action>: 'restore' or 'create'. equivalent to -r and -c
+
+EOF
+}
+
+# command line processing
+while [ $# -gt 0 ]; do
+	case "$1" in
+                -b|--b)
+                        cmd_branch=$2
+                        shift
+                        ;;
+                -m|--m)
+                        checkpoint_msg="$2"
+                        shift
+                        ;;
+	        -v|--v)
+                        verbose=t
+                        ;;
+	        -r|--r)
+                        restoring=t
+			checkpointing=
+                        ;;
+	        -c|--c)
+                        restoring=
+			checkpointing=t
+                        ;;
+	        -h|--h)
+                        usage
+			exit
+                        ;;
+	        -*)   
+                        usage
+			exit
+			;;
+		*)
+			break
+			;;
+	esac
+	shift
+done
+
+if [ -z "$1" ] ; then
+    if [ -z "$checkpointing" ] && [ -z "$restoring" ]; then
+	usage
+	exit
+    fi
+fi
+
+# source utility functions
+. `dirname $0`/kgit
+
+action=$@
+case $action in
+    create)
+	restoring=
+	checkpointing=t
+	;;
+    restore)
+	restoring=t
+	checkpointing=
+	;;
+esac
+
+if [ ! -d .git ]; then
+    echo "ERROR. Not a git repository"
+    exit 1
+fi
+
+# set some defaults
+if [ -z "$checkpoint_msg" ]; then
+    checkpoint_msg="checkpoint: `date`"
+fi
+
+# save this so we can go back later ...
+current_branch=`get_current_git_branch`
+
+# The (optional) checkpoint tag tells us two things:
+#  - the tree has been checkpointed (obviously)
+#  - the branch that contains the checkpoint
+# And it is of the format:
+#  - 'checkpoint-<branch_name>'
+check_refs=`git tag | grep checkpoint- | head -n1`
+if [ -n "$check_refs" ]; then
+    checkpoint_branch=`echo $check_refs | cut -d- -f2`
+    verify_branch=`git show-ref $checkpoint_branch`
+    checkpoint_tag_name=$check_refs
+    if [ -z "$verify_branch" ]; then
+	checkpoint_branch=
+	checkpoint_tag_name=
+    fi
+fi
+
+# allow a command line override
+if [ -n "$cmd_branch" ]; then
+    checkpoint_branch=$cmd_branch
+fi
+
+# Check to see if the checkpoint branch contains a directory of the
+# same name. If it does, that's the base of what we'll capture in the
+# checkpoint. If it doesn't, fallback to the 'meta' default.
+
+git show-ref --quiet --verify -- "refs/heads/$checkpoint_branch"
+if [ $? -eq 1 ]; then
+    meta_dir=$checkpoint_branch
+else
+    meta_dir=meta
+    git show $checkpoint_branch:$checkpoint_branch &> /dev/null
+    if [ $? -eq 0 ]; then
+	meta_dir=$checkpoint_branch
+    fi
+fi
+
+if [ -z "$checkpoint_branch" ]; then
+    echo "[ERROR]: an existing checkpoint branch was not detected and no command line branch provided"
+    exit 1
+fi
+
+if [ -z "$files_to_checkpoint" ]; then
+    dirs_to_checkpoint="$meta_dir/cfg/kernel-*cache $meta_dir/cfg/scratch \
+                        $meta_dir/patches $meta_dir/scripts $meta_dir"
+fi
+
+if [ -n "$checkpointing" ]; then    
+    if [ -n "$verbose" ]; then
+	echo "[INFO]: Creating checkpoint on branch $checkpoint_branch"
+    fi
+
+    # if the branch doesn't already exist. Create it as an orphan.
+    git show-ref --quiet --verify -- "refs/heads/$checkpoint_branch"
+    if [ $? -eq 1 ]; then
+        # create a meta-information branch
+	git checkout --orphan $checkpoint_branch
+	if [ $? != 0 ]; then
+		echo "[ERROR]: orphan branch creation failed"
+		exit -1
+	fi
+        # remove the unwanted files/directories
+	git rm -rfq `ls -d .gitignore .mailmap * | grep -v $checkpoint_branch`
+	if [ $? != 0 ]; then
+		echo "[ERROR]: git rm -rfq failed"
+		exit -1
+	fi
+    else
+	git checkout $checkpoint_branch
+	if [ $? != 0 ]; then
+		echo "[ERROR]: checkpoint branch checkout failed"
+		exit -1
+	fi
+    fi
+
+    echo "kernel repository meta data base" >> README.txt
+    git add -f README.txt
+    if [ $? != 0 ]; then
+	echo "[ERROR]: git add failed"
+	exit -1
+    fi
+    git commit -s -m "meta: add README"
+    if [ $? != 0 ]; then
+	echo "[ERROR]: git commit README failed"
+	exit -1
+    fi
+    
+    # either we just created an orphan branch .. or it already
+    # existed. Either way, iterate the directories that should be added to
+    # the branch and add them.
+    for d in $dirs_to_checkpoint; do       
+	git add -f $d
+	if [ $? != 0 ]; then
+		echo "[ERROR]: git add dirs failed"
+		exit -1
+	fi
+	if [ -f "$d/00-README" ]; then
+	    TXT=`mktemp`
+	    echo "checkpoint dir: $d" > $TXT
+	    echo >> $TXT
+	    echo "What follows is the 00-README from dir \"$d\"." >> $TXT
+	    echo >> $TXT
+	    echo " ----------------------" >> $TXT
+	    cat $d/00-README >> $TXT
+	    echo " ----------------------" >> $TXT
+	    git commit -q -s -F $TXT  &> /dev/null
+	    if [ $? != 0 ]; then
+		echo "[ERROR]: git commit 00-README failed"
+		exit -1
+	    fi
+	    rm -f $TXT
+	else
+	    git commit -q -s -m "checkpoint dir: $d" &> /dev/null
+	    if [ $? != 0 ]; then
+		echo "[ERROR]: git commit checkpoint dir failed"
+		exit -1
+	    fi
+	fi
+    done
+
+    if [ -z "$verbose" ]; then
+	q="-q"
+    fi
+
+    # tag the branch so it can be found later
+    git show-ref --quiet --verify -- "refs/tags/checkpoint-$checkpoint_branch"
+    if [ $? -eq 1 ]; then
+	git tag checkpoint-$checkpoint_branch
+        if [ $? != 0 ]; then
+		echo "[ERROR]: git tag checkpoint failed"
+		exit -1
+        fi
+    fi
+
+    # return to the current branch
+    if [ "$checkpoint_branch" != "$current_branch" ]; then
+	git checkout -q $current_branch
+        if [ $? != 0 ]; then
+		echo "[ERROR]: git checkout current failed"
+		exit -1
+        fi
+    fi
+
+else # restoring ...
+
+    if [ -n "$verbose" ]; then
+	echo "[INFO]: Restoring checkpoint from branch $checkpoint_branch"
+    fi
+
+    # check if '$meta_dir' is tracked or not. If it is untracked, we don't
+    # have anything to do.
+    x=`git ls-files -o $meta_dir | head -n1`
+    if [ -n "$x" ]; then
+     	echo "[INFO]: checkpoint is already restored, nothing to do"
+     	exit 0
+    fi
+
+    # checkpoint-<branch> is tagged once and then never changes.  we
+    # considering everything from this tag to the HEAD of its branch part of
+    # the checkpoint. If the branch was an orphan branch, the merge_base will
+    # be zero. In that case, we just get all commits on the branch via git
+    # rev-list
+    merge_base=`git merge-base $checkpoint_branch master`
+    if [ -z "$merge_base" ]; then
+	merge_base=`git rev-list $checkpoint_branch -- | tail -1`
+    fi
+
+    # save the old branch, and make the data untracked.
+    git checkout -q -b $checkpoint_branch-temp $checkpoint_branch
+    if [ $? != 0 ]; then
+	echo "[ERROR]: git checkout -q -b failed"
+	exit -1
+    fi
+    git reset --mixed $merge_base
+    if [ $? != 0 ]; then
+	echo "[ERROR]: git reset mixed failed"
+	exit -1
+    fi
+
+    # delete our working branch, and return to the original one
+    git checkout -q $current_branch
+    if [ $? != 0 ]; then
+	echo "[ERROR]: git checkout -q failed"
+	exit -1
+    fi
+    git branch -D $checkpoint_branch-temp
+    if [ $? != 0 ]; then
+	echo "[ERROR]: git branch -D failed"
+	exit -1
+    fi
+
+    mv $checkpoint_branch .$checkpoint_branch
+fi

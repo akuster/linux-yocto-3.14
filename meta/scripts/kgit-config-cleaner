@@ -1,0 +1,279 @@
+#!/bin/bash
+
+#  Copyright (c) 2012 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+
+# example:
+#  cd build/tmp/work/routerstationpro-poky-linux/linux-yocto-3.0.32*/linux/meta/cfg/yocto/standard/routerstationpro
+#  kgit-config-cleaner -v --force --type all --audit-dir `pwd` \
+#   -i ../../../kernel-cache/bsp/routerstationpro/routerstationpro.cfg  \
+#   -o cleaned_config
+
+usage()
+{
+cat << EOF
+
+  kgit-config-cleaner [--force] [--dry-run] [--type <audit type list>] 
+                      --audit-dir <dir> [ -k <keep configs> ] \
+                      -i <input config> -o <output config>
+
+   kgit-config-cleaner is run against an input file, and the results of an
+   initial kernel configuration that has produced a Kconfig option audit. It
+   produces a modified output file that can then be fed back into the process
+   to refine a kernel configuration.
+
+
+   type: comma separated list of audit types to process.
+          all: the default. process all audit files
+          errors: process fragment errors
+          invalid: process invalid options
+          mismatch: process mismatched options
+          redefined: process redefined options
+          non-hardare: process non-hardware options
+     
+   input config: The input file to be cleaned. This is typically a defconfig.
+
+   output config: The filename of your choice. It is a copy of 
+                  input config, with offending lines removed. 
+
+   keep config: An input config file with a list of configurations that should
+                be maintained regardless of other cleaning activities. These
+                are typically config options that should be declared as
+                'hardware' for the given board, and the keep entry would no
+                longer be necessary.
+                Note: This file is normally called 'hardware.cfg', so it can be
+                reused by the build process in future iterations.
+                
+   audit dir: the directory that contains the output of a yocto kernel 
+              configuration and audit. The input files in this directory are
+              automatically processed and used to produce the output
+ 
+   --force: force overwrite the output file
+   --dry-run: don't modify any files, but dump what would be done
+   --verbose: run with extra output
+  
+EOF
+}
+
+if [ -z "$1" ]; then
+    usage
+    exit
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --i|-i) input=$2
+	    shift
+            ;;
+    --o|-o)
+            output=$2
+            shift
+            ;;
+    --k|-k)
+	    keep_config=$2
+	    shift
+	    ;;
+    --audit-dir)
+            audit_dir=$2
+            shift
+            ;;
+    --type)
+            audit_types=$2
+            shift
+            ;;
+    --force|-f) force=t
+            ;;
+    --dry-run) dry_run=t
+            ;;
+    -v) verbose=t
+            ;;
+    *) break
+            ;;
+    esac
+    shift
+done
+
+
+if [ -z "$input" ]; then
+    usage
+    exit 1
+fi
+if [ -z "$output" ]; then
+    usage
+    exit 1
+fi
+
+if [ -z "$audit_dir" ]; then
+    usage
+    exit 1
+fi
+
+if [ -z "$audit_types" ] || [ "$audit_types" == "all" ]; then
+    fragment_errors_flag=t
+    invalid_cfg_flag=t
+    mismatch_flag=t
+    redefinition_flag=t
+    specified_non_hardware_flag=t
+else
+    types=$(echo $audit_types | tr "," "\n")
+    for t in $types; do
+	case $t in
+	    errors)
+		fragment_errors_flag=t
+		;;
+	    invalid)
+		invalid_cfg_flag=t
+		;;
+	    mismatch)
+		mismatch_flag=t
+		;;
+	    redefined)
+		redefinition_flag=t
+		;;
+	    non-hardware)
+		specified_non_hardware_flag=t
+		;;
+	    *) 
+		echo "Invalid audit type $t passed"
+		exit 1
+		;;
+	esac
+    done
+fi
+
+echo "INFO: running configuration cleaning on:"
+echo "$input"
+echo ""
+
+fragment_errors_file="fragment_errors.txt"
+invalid_cfg_file="invalid.cfg"
+mismatch_file="mismatch.txt"
+redefinition_file="redefinition.txt"
+specified_non_hardware_file="specified_non_hdw.cfg"
+specified_hardware_file="specified_hdw.cfg"
+
+process_cfg_only_audit_file()
+{
+    aud_file=$1
+    in_file=$2
+    out_file=$3
+    override_file=$4
+    count=0
+
+    echo ""
+    echo "INFO: processing `basename $aud_file`"
+
+    rm -f /tmp/removal.txt
+
+    # check every config specified in the intput file against the
+    # supplied audit file. If the audit says it was bad, then it should
+    # be removed. This is a brute force first step
+    cfg_list=`grep '^\(# \)\{0,1\}CONFIG_[a-zA-Z0-9_]*[=\( is not set\)]' \
+	      $in_file | sed 's/^\(# \)\{0,1\}\(CONFIG_[a-zA-Z0-9_]*\)[= ].*/\2/'`
+    for o in $cfg_list; do
+	remove=
+	keep=
+	option_line=`grep "^\(# \)\{0,1\}$o[=\( is not set\)]" $in_file`
+	grep -q $o $aud_file
+	if [ $? -eq 0 ]; then
+	    # check to see if the option is in the keep file
+	    if [ -n "$keep_config" ] || [ -n "$override_file" ]; then
+		grep -q -w $o $keep_config $override_file
+		if [ $? -eq 0 ]; then
+		    if [ -n "$verbose" ]; then
+			echo "   INFO: option $o would have been removed, but it is"
+			echo "         specified in the keep configuration list"
+		    fi
+		    keep=t
+		fi
+	    fi
+	    if [ -z "$keep" ]; then
+		count=`expr $count + 1`
+		if [ -n "$dry_run" ]; then
+		    echo "   [dry-run] option $o should be removed from the configuration"
+		else
+		    remove=t
+		    echo $option_line >> /tmp/removal.txt
+		fi
+	    fi
+	fi
+	if [ -n "$remove" ]; then
+	    if [ -n "$verbose" ]; then
+		echo "   INFO: removing $option_line"
+	    fi
+	    option_line=`echo $option_line | sed 's%/%.%g'`
+	    sed -i "/^$option_line/d" $out_file
+	    if [ $? -ne 0 ]; then
+		echo "   WARNING: could not remove $option_line"
+	    fi
+	fi
+    done
+
+    if [ $count -eq 0 ]; then
+	echo "   No `basename $aud_file` infractions are set by the input file"
+    fi
+}
+
+# The file is not only a bare listing of CONFIG_<blah> and 
+# hence requires special processing. This is a placeholder
+# function
+process_audit_file()
+{
+    true
+}
+
+generate_option_list()
+{
+    in_file=$1
+    out_file=$2
+
+    if [ -n "$verbose" ]; then
+	echo "INFO: generating option list from $in_file"
+    fi
+    cat $in_file | grep -o 'CONFIG_[a-zA-Z0-9_]*' | uniq >> $out_file
+}
+
+process_audit_directory()
+{
+    if [ -n "$fragment_errors_flags" ] && [ -s "$audit_dir/$fragment_errors_file" ]; then
+	echo "INFO: processing $fragment_errors_file"
+	process_audit_file "$audit_dir/$fragment_errors_file" "$input" "$output"
+    fi
+    if [ -n "$invalid_cfg_flag" ] && [ -s "$audit_dir/$invalid_cfg_file" ]; then
+	echo "INFO: processing $invalid_cfg_file"
+    	process_cfg_only_audit_file "$audit_dir/$invalid_cfg_file" "$input" "$output"
+    fi
+    if [ -n "$mismatch_flag" ] && [ -s "$audit_dir/$mismatch_file" ]; then
+	rm -f /tmp/mismatch.cfg
+	generate_option_list $audit_dir/$mismatch_file /tmp/mismatch.cfg
+	process_cfg_only_audit_file /tmp/mismatch.cfg "$input" "$output"
+    fi
+    if [ -n "$redefinition_flag" ] && [ -s "$audit_dir/$redefinition_file" ]; then
+	rm -f /tmp/redefinition.cfg
+	generate_option_list $audit_dir/$redefinition_file /tmp/redefinition.cfg
+	process_cfg_only_audit_file /tmp/redefinition.cfg "$input" "$output" "$specified_hardware_file"
+    fi
+    if [ -n "$specified_non_hardware_flag" ] && [ -s "$audit_dir/$specified_non_hardware_file" ]; then
+    	process_cfg_only_audit_file "$audit_dir/$specified_non_hardware_file" "$input" "$output"
+    fi
+}
+
+if [ -s "$output" ] && [ -z "$force" ]; then
+    echo "output file $output exists, use -f to force output"
+    exit 1
+fi
+
+cp -f $input $output
+
+process_audit_directory
+
+echo "INFO: processing complete, output is saved in file: $output"

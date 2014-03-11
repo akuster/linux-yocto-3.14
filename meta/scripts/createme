@@ -1,0 +1,233 @@
+#!/bin/bash
+
+# "createme" script.
+
+#  Copyright (c) 2010-2012 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  This script must be run from inside a Linux source directory
+
+usage()
+{
+cat << EOF
+
+    createme [-v] [--disable-meta-gen] --meta=<branch name> <arch> <branch>
+
+      --disable-meta-gen: do not automatically create meta data
+                          if not already present in the source tree.
+      --meta: the branch name for meta data. default is 'meta'
+      -v: verbose processing
+      <arch>: the kernel architecture being processed
+      <branch>: repository branch to use (or create) for the build
+
+EOF
+}
+
+if [ -z "$1" ]; then
+	usage
+	exit
+fi
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	    --help)
+		usage
+		exit
+		;;
+            --disable-meta-gen)
+                must_have_meta=t
+                ;;
+            --meta)
+                default_meta_branch=$2
+		shift
+                ;;
+	    --force)
+		force=t
+		;;
+	    -v) verbose=t
+		;;
+	    *) break
+		;;
+	esac
+	shift
+done
+
+arch=$1
+branch=$2
+CURRENT=`git branch |grep \*|sed 's/^\* //'`
+repo=
+
+if [ -z "$default_meta_branch" ]; then
+	default_meta_branch=meta
+fi
+
+# check_repo has two uses:
+#   - santize: ensure that the repository is valid/sane
+#   - identify: return the type of repository
+#
+check_repo()
+{
+	action=$1
+	meta=
+
+	git show-ref --quiet --verify -- "refs/heads/$default_meta_branch"
+	if [ $? -eq 0 ]; then
+		meta_branch=$default_meta_branch
+	fi
+
+	if [ "$action" = "sanitize" ]; then
+		if [ -z "$meta_branch" ]; then
+			if [ -n "$must_have_meta" ]; then
+				echo "ERROR. meta data not found, check upstream repo for tags and branches"
+				exit 1
+			else
+				echo "WARNING: no meta data branch found ..."
+			fi
+		fi
+	else
+		# we are identifying the repository
+		if [ -n "$meta_branch" ]; then
+			echo "meta-data"
+		else	    
+			echo "external"
+		fi
+	fi
+}
+
+# metaize creates meta data skeleton for a repository that would otherwise
+# not contain any meta data. This is largely a kernel version, and a capture
+# of the Kconfig* files available in the tree.
+metaize()
+{
+	kbranch=$1
+
+	old_pwd=`pwd`
+	# repo is set during the decheckpoint phase
+	if [ "$repo" = "external" ]; then
+		mkdir -p $meta_dir/cfg/kernel-cache
+
+		version=`grep -E "^VERSION =" Makefile | cut -d\= -f2 | sed 's/ //g'`
+		patchlevel=`grep -E "^PATCHLEVEL =" Makefile | cut -d\= -f2 | sed 's/ //g'`
+		sublevel=`grep -E "^SUBLEVEL =" Makefile | cut -d\= -f2 | sed 's/ //g'`
+		echo -n "v" >> $meta_dir/cfg/kernel-cache/kver
+		echo -n "$version" >> $meta_dir/cfg/kernel-cache/kver
+		echo -n "." >> $meta_dir/cfg/kernel-cache/kver
+		echo -n "$patchlevel" >> $meta_dir/cfg/kernel-cache/kver
+		echo -n "." >> $meta_dir/cfg/kernel-cache/kver
+		echo "$sublevel" >> $meta_dir/cfg/kernel-cache/kver
+
+		mkdir -p $meta_dir/cfg/scratch/obj
+		cd $meta_dir/cfg/scratch/obj
+
+		(cd $old_pwd; find -name 'Kconfig' | sed 's/^.\///' > $meta_dir/cfg/scratch/obj/hardware.kcf)
+	fi
+}
+
+# find the meta directory
+meta_dir()
+{
+    # first check to see if there's a directory of the same name
+    # as the meta branch. That's the first choice. If it doesn't exist
+    # check the meta branch name a .$meta_branch, and finally fall back
+    # to .meta if everything fails
+    if [ -n "$meta_branch" ]; then
+	if [ -d "$meta_branch" ]; then
+	    meta_dir="$meta_branch"
+	elif [ -d ".$meta_branch" ]; then
+	    meta_dir=".$meta_branch"
+	fi
+    fi
+    if [ -z "$meta_dir" ]; then
+	meta_dir=`ls -d .meta* | head -1`
+	if [ -z "$meta_dir" ]; then
+	    meta_dir=".meta"
+	fi
+    fi
+}
+
+# restore the checkpoint. This routine supports two types of meta
+# data:
+#    - global meta data that is available on all branches, all the time
+#    - meta data on a dedicated branch
+#
+# In the first type, nothing needs to be done, since the meta data is
+# always available. We can detect this type of data by counting the number
+# of branches that contain the meta branch
+#
+# In the second type, we need to restore the checkpoint and make the meta 
+# data global by creating untracked copies of the files.
+#
+decheckpoint()
+{	
+	# this sets $meta_branch, among other things
+	check_repo sanitize
+	case `check_repo identify` in
+		meta-data)
+	       		repo=meta-data
+			# Is the meta-data merged out to the other branches?
+			# If so that means that we don't need to undo the
+			# checkpoint. We can tell by counting how many
+			# contain the meta data. If it's 2 or less, then we
+			# need to restore the checkpoint.
+			branch_count=`git branch --contains $meta_branch | wc -l`
+			if [ $branch_count -le 2 ]; then
+				kgit-checkpoint -r -b $meta_branch
+			fi
+			;;
+		external)
+			if [ -n "$must_have_meta" ]; then
+				echo "ERROR. meta data not found. Check upstream kernel for tags and branches"
+				exit 1
+			fi
+			repo=external
+			;;
+	esac
+
+	# set the meta dir
+	meta_dir
+}
+
+# checks and sets the defconfig for the build
+check_defconfig() {
+	config=$1
+
+	defconfig=`get_defconfig $arch $config`
+}
+
+# checks and creates the branch that was indicated when creatme was
+# called. This branch is what is expected to contain the kernel content
+# being built
+check_branch() {
+	branch=$1
+
+	ktgt=$branch
+
+	old_pwd=`pwd`
+	git show-ref --quiet --verify -- "refs/heads/$ktgt"
+	if [ $? -eq 1 ]; then
+		if [ "$repo" == "external" ]; then
+			git checkout -b $ktgt
+		fi
+		mkdir -p $meta_dir/cfg/scratch/obj
+	else
+		# branch exists. Are we an 'external repo' ?
+		if [ "$repo" == "external" ]; then
+			git checkout $ktgt
+		fi
+	fi
+
+	cd $old_pwd
+}
+
+
+decheckpoint
+check_branch $branch
+metaize $branch

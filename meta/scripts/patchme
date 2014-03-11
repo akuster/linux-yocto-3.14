@@ -1,0 +1,127 @@
+#!/bin/bash
+
+# "patchme" script.
+
+#  Copyright (c) 2010 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  This script must be run from inside a Linux source directory
+
+usage()
+{
+cat << EOF
+
+    patchme [<machine>] [<meta_series>]
+
+      <machine>: the name of the kernel machine to patch
+ 
+      <meta_series>: the meta series that should be applied to the
+                     tree. If it isn't passed, it will be located 
+                     based on the branch name.
+
+EOF
+}
+
+# find the meta directory
+meta_dir()
+{
+    # first check to see if there's a directory of the same name
+    # as the meta branch. That's the first choice. If it doesn't exist
+    # check the meta branch name a .$meta_branch, and finally fall back
+    # to .meta if everything fails
+    if [ -n "$meta_branch" ]; then
+	if [ -d "$meta_branch" ]; then
+	    meta_dir="$meta_branch"
+	elif [ -d ".$meta_branch" ]; then
+	    meta_dir=".$meta_branch"
+	fi
+    fi
+    if [ -z "$meta_dir" ]; then
+	meta_dir=`ls -d .meta* | head -1`
+	if [ -z "$meta_dir" ]; then
+	    meta_dir=".meta"
+	fi
+    fi
+}
+
+meta_branch=$KMETA
+meta_dir
+
+if [ -z "$1" ]; then
+	usage
+	exit
+fi
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	    --help)
+		usage
+		exit
+		;;
+	    --force)
+		force=t
+		;;
+	    -v) verbose=t
+		;;
+	    *) break
+		;;
+	esac
+	shift
+done
+
+ktgt=$1
+meta_series=$2
+CURRENT=`git branch |grep \*|sed 's/^\* //'`
+if [ -z "$branch" ]; then
+	branch=$CURRENT
+fi
+
+# Expose the data off of the meta branch
+decheckpoint()
+{
+	kgit-checkpoint -r
+}
+
+find_meta_series() {
+	tgt=$1
+	meta_series=`find $meta_dir/cfg/scratch -name "$tgt\-*meta"`
+	if [ -z "$meta_series" ]; then
+	    echo "ERROR. Could not locate meta series for $tgt"
+	    exit 1
+	fi
+}
+
+do_init() {
+	kgit-meta --init $meta_series
+	if [ $? -ne 0 ]; then
+	    echo "ERROR initializing git tree, exiting"
+	    exit 1
+	fi
+}
+
+do_apply() {
+	kgit-meta -v --continue --apply $meta_series
+	if [ $? -ne 0 ]; then
+	    echo "ERROR. could not update git tree"
+	    exit 1
+	fi
+}
+
+if [ -z "$meta_series" ]; then
+    find_meta_series $ktgt
+    if [ -z "$meta_series" ]; then
+	echo "ERROR. Could not find a meta series for $branch"
+	exit 1
+    fi
+fi
+
+do_init $meta_series
+do_apply $meta_series

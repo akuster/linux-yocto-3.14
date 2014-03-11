@@ -1,0 +1,226 @@
+#!/bin/bash
+
+#  Copyright (c) 2011 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+
+# For consistent behaviour with "grep -w"
+LC_ALL=C
+export LC_ALL
+
+usage() {
+	echo "Usage: $0 [OPTIONS] [CONFIG [...]]"
+	echo "  -h        display this help text"
+	echo "  -l <dir>  directory for logging sanity output"
+}
+
+LOGDIR=.cfg
+while true; do
+	case $1 in
+	"-l")
+		LOGDIR=$2
+		shift
+		shift
+		continue
+		;;
+	"-h")
+		usage
+		exit
+		;;
+	*)
+		break
+		;;
+	esac
+done
+
+FRAGS=$*
+
+if [ ! -d $LOGDIR ]; then
+	mkdir -p $LOGDIR
+fi
+
+# On the fly list of all known hardware related Kconfig* files
+KCONF_HDW=$LOGDIR/hardware.kcf
+# Same for all known non-hardware related Kconfig* files
+KCONF_NONHDW=$LOGDIR/non-hardware.kcf
+
+# On the fly override for hardware CONFIG items that are 
+# in a non-hardware Kconfig.
+CONF_HDW=$LOGDIR/always_hardware.cfg
+# Same for non-hardware CONFIG items that are in a hardware Kconfig.
+CONF_NONHDW=$LOGDIR/always_nonhardware.cfg
+
+CONF_REQUIRED=$LOGDIR/required_configs.cfg
+CONF_OPTIONAL=$LOGDIR/optional_configs.cfg
+
+
+# Egads. People are listing the same thing multiple times within a fragment.
+#  An evil sin that deserves its own category (and insults).
+KCONF_FRAG_ERRS=$LOGDIR/fragment_errors.txt
+# Log items that were defined as 'generic' (aka software) and were changed
+# to hardware specific. This is a borderline error.
+KCONF_REDFINED_AS_BOARD_SPECIFIC=$LOGDIR/redefined_as_board_specific.txt
+
+rm -f $KCONF_FRAG_ERRS
+
+# This is used to filter out duplicate declarations within a single fragment.
+# People shouldn't do this, but we must behave predictably if they do...
+# Also check for lines that start with "# CONFIG_" but don't end with the all
+# so important " is not set" -- as this always seems to surprise people who
+# think the leading hash is all that matters.
+function sanitize_fragment ()
+{
+	ORIG_FRAG=$1
+	CLEAN_FRAG=$2
+
+	rm -f $CLEAN_FRAG
+	touch $CLEAN_FRAG
+	CFG_LIST=`grep '^\(# \)\{0,1\}CONFIG_[a-zA-Z0-9_]*[=\( is not set\)]' \
+	  $ORIG_FRAG | sed 's/^\(# \)\{0,1\}\(CONFIG_[a-zA-Z0-9_]*\)[= ].*/\2/'`
+	for i in $CFG_LIST ; do
+		LASTVAL=`grep -w $i $ORIG_FRAG | tail -n1`
+		echo $LASTVAL|grep -q '^# CONFIG_'
+		HEAD_OK=$?
+		echo $LASTVAL|grep -q ' is not set$'
+		TAIL_OK=$?
+
+		grep -q -w $i $CLEAN_FRAG
+		if [ $? == 0 ] ; then	
+			echo Warning: Value of $i is defined multiple times within fragment $ORIG_FRAG:
+			grep -w $i $ORIG_FRAG
+			echo
+		elif [ $HEAD_OK -eq 0 ] && [ $TAIL_OK -ne 0 ]; then
+			# Enforce proper "# CONFIG_FOO is not set" syntax.
+			# LKC would ignore it anyway, so let them know.
+			echo Warning: Ignoring \"$LASTVAL\" -- invalid CONFIG syntax.
+		else
+			echo $LASTVAL >> $CLEAN_FRAG
+		fi
+	done
+}
+
+rm -f $KCONF_FRAG_ERRS $KCONF_NONHDW $KCONF_HDW \
+      $CONF_NONHDW $CONF_HDW $CONF_REQUIRED $CONF_OPTIONAL
+
+# Assemble fragments and collect lists of new/added Kconfigs
+# 1st pass is to just collect all the state info -- i.e. the
+# categorization of Kconfigs and hardware specific opts.
+# Then we have all the data we need to audit things properly.
+
+for f in $FRAGS; do
+	# The input line is the Host path into the kernel-next cache.
+	frag_dir=`dirname $f`
+
+	# Possible fixme -- could check hdw additions against the non-hdw
+	# and vice versa -- it would allow folks to mask things.
+	# See alternate solution just at the bottom of this loop.
+	if [ -f $frag_dir/non-hardware.kcf ]; then
+		cat $frag_dir/non-hardware.kcf | grep -v '^#' | \
+			sed '/^$/d' >> $KCONF_NONHDW
+	fi
+	if [ -f $frag_dir/hardware.kcf ]; then
+		cat $frag_dir/hardware.kcf | grep -v '^#' | \
+			sed '/^$/d' >> $KCONF_HDW
+	fi
+	if [ -f $frag_dir/non-hardware.cfg ]; then
+		cat $frag_dir/non-hardware.cfg | grep -v '^#' | \
+			sed '/^$/d' >> $CONF_NONHDW
+	fi
+	if [ -f $frag_dir/hardware.cfg ]; then
+		cat $frag_dir/hardware.cfg | grep -v '^#' | \
+			sed '/^$/d' >> $CONF_HDW
+	fi
+	if [ -f $frag_dir/required.cfg ]; then
+		cat $frag_dir/required.cfg | grep -v '^#' | \
+			sed '/^$/d' >> $CONF_REQUIRED
+	fi
+	if [ -f $frag_dir/optional.cfg ]; then
+		cat $frag_dir/optional.cfg | grep -v '^#' | \
+			sed '/^$/d' >> $CONF_OPTIONAL
+	fi
+done
+
+if [ ! -f $KCONF_NONHDW ]; then
+    touch $KCONF_NONHDW
+fi
+if [ ! -f $KCONF_HDW ]; then
+    touch $KCONF_HDW
+fi
+if [ ! -f $CONF_NONHDW ]; then
+    touch $CONF_NONHDW
+fi
+if [ ! -f $CONF_HDW ]; then
+    touch $CONF_HDW
+fi
+if [ ! -f $CONF_OPTIONAL ]; then
+    touch $CONF_OPTIONAL
+fi
+if [ ! -f $CONF_REQUIRED ]; then
+    touch $CONF_REQUIRED
+fi
+
+# Nobody ever specifies things as non-hardware.  All they ever do is lie like
+# a cheap rug and say that things that aren't hardware really are (like
+# turning on a fs in a BSP) and then cheating to mask the warning).  So
+# rather than filter all hardware from non hdw on the fly for each new
+# addition, as mentioned above - simply instead ensure anything listed in the
+# hardware list *doesnt* appear in the non-hdw list.
+#
+# But this qualifies as a redefintion as something that wasn't board specific
+# to something that IS board specific. So we should log it, and make it an
+# informational message.
+#
+mv -f $CONF_NONHDW $CONF_NONHDW~
+cat $CONF_NONHDW~ | grep -v -w -f $CONF_HDW > $CONF_NONHDW
+# the difference between what was 'non hardware' and 'hardware' means that
+# it was re-defined to be board specific. We should log this change and 
+# report it later
+cat $CONF_NONHDW~ | grep -w -f $CONF_HDW > $KCONF_REDFINED_AS_BOARD_SPECIFIC
+rm -f $CONF_NONHDW~
+
+first_fragment=
+for f in $FRAGS; do
+        echo "[INFO] Sanitizing $f"
+
+	if [ -f $f ]; then
+		rm -f $LOGDIR/.scratch
+		touch $LOGDIR/.scratch
+
+		sanitize_fragment $f "$LOGDIR/.scratch" >> $KCONF_FRAG_ERRS
+
+		# Create a sanitized fragment that will be pased to future
+		# phases of processing2
+		rm -f $f.sanitized		
+		if [ -z "$first_fragment" ]; then
+			# First create header that lists all the fragments.
+			echo "#" > $f.sanitized
+			echo "#" >> $f.sanitized
+			echo -n "# This file has been automatically generated from " >> $f.sanitized
+			echo " the following set of configure files: " >> $f.sanitized
+			echo "#" >> $f.sanitized
+			for t in $FRAGS; do
+				echo "# `readlink -f $t`" >> $f.sanitized
+			done
+			echo "#" >> $f.sanitized
+			echo "#" >> $f.sanitized
+
+			first_fragment=false
+		fi
+
+		echo "# " >> $f.sanitized
+		echo "# Begin: $f" >> $f.sanitized
+		cat $LOGDIR/.scratch >> $f.sanitized
+		rm -f $LOGDIR/.scratch
+	else
+		echo "[ERROR] Kern frag $f does not exist"
+		exit 1
+	fi
+done

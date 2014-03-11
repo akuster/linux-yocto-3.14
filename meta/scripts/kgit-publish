@@ -1,0 +1,193 @@
+#!/bin/bash
+
+#  (kgit-publish), (prepare a git tree for publication)
+
+#  Copyright (c) 2008-2012 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+# For consistent behaviour with "grep -w"
+LC_ALL=C
+export LC_ALL
+
+path=`dirname $0`
+. $path/kgit
+PATH=`cd $path; pwd`:$PATH
+
+usage()
+{
+cat <<EOF
+
+ kgit-publish [-d] [-a] [-c] [-f] [--noauto] <src> <dest>
+
+   -c: compact. make the exported repository as small as possible 
+   -d: description. put the description of the repository in place
+                    when publishing
+   -f: force. if no checkpoint or other errors are found, publish
+              tree anyway. removes a destination repository if found.
+              removes working copy of source repository.
+   -a: auto checkpoint if required
+   --noauto: don't perform an automatic checkpoint
+   --reference: reference repo
+
+   Environment variables:
+      
+      KMETA: defines the meta directory and branch. If not set, the
+             default is meta/meta
+
+   -h: Help
+   -v: Verbose
+
+EOF
+}
+
+auto=t
+while [ $# -gt 0 ]; do
+	case "$1" in
+                -v|--v)
+		        verbose=t
+			;;
+                -c|--c)
+		        compact=t
+			;;
+                -d|--d)
+		        description="$2"
+			shift
+			;;
+                --reference)
+		        ref="--reference $2"
+			shift
+			;;
+	        -f|--f) 
+                        force=t
+			;;
+                -a|--a)
+                        auto=t
+                        ;;
+                --noauto)
+                        auto=
+			;;
+                -h|--h)
+                        usage
+                        exit
+                        ;;
+		*)
+			break
+			;;
+	esac
+	shift
+done
+
+if [ ! $# -gt 1 ]; then
+    usage
+    exit 1
+fi
+
+src=$1
+dest=$2
+
+meta_dir=$KMETA
+checkpoint_branch=$KMETA
+
+if [ -z "$meta_dir" ]; then
+	meta_dir=meta
+	checkpoint_branch=meta
+fi
+
+if [ ! -d "$dest" ] || [ -n "$force" ]; then
+
+    if [ -d "$dest" ]; then
+	echo "[INFO] removing dest repository at $dest"
+	rm -rf "$dest"
+    fi
+
+    SRCTMP=`mktemp -d --tmpdir=./`
+    if [ $? != 0 ]; then
+	echo "[ERROR] mktemp failed"
+	exit -1
+    fi
+
+    if [ -n "$verbose" ]; then
+	    echo "[INFO] making working copy of $src in $SRCTMP"
+    fi
+    cp -a $src $SRCTMP
+    if [ $? != 0 ]; then
+	echo "[ERROR] making working copy of $src failed"
+	exit -1
+    fi
+
+    # now we only operate on temp copy
+    src=$SRCTMP/$src
+
+    x=`cd $src; git show-ref checkpoint_start`
+    if [ -z "$x" ]; then
+	x=`cd $src; git show-ref checkpoint`
+    fi
+    if [ -z "$x" ]; then
+	if [ -n "$auto" ]; then
+	    if [ -n "$verbose" ]; then
+		echo "[INFO] checkpointing repository"
+	    fi
+	    (cd $src; kgit checkpoint -b $checkpoint_branch -c)
+	    if [ $? != 0 ]; then
+		echo "[ERROR] checkpoint failed"
+		exit 1
+	    fi
+	    auto_checked=t
+	else
+	    if [ -z "$force" ]; then
+		echo ""
+		echo "[ERROR] checkpoint not found, cannot publish this tree"
+		echo ""
+		exit 1
+	    fi
+	fi
+    fi
+    if [ -n "$verbose" ]; then
+	echo "[INFO] creating published repository $dest"
+    fi
+
+    git clone --bare $ref $src $dest
+else
+    echo "[INFO] $dest exists, and --force was not passed. nothing to do"
+    exit 0
+fi
+
+if [ -d $dest ]; then
+    old=`pwd`
+    cd $dest
+
+    if [ -n "$description" ]; then
+	echo "$description" > description
+    fi
+
+    if [ ! -z "$compact" ]; then
+	git gc --aggressive --prune
+	git prune
+    fi
+    cd $old
+fi
+
+if [ -n "$auto_checked" ]; then
+    (cd $src; kgit checkpoint -b $checkpoint_branch -r)
+    if [ $? != 0 ]; then
+	echo "[ERROR] checkpoint restore failed"
+	exit 1
+    fi
+fi
+
+if [ -n "$force" ]; then
+    echo "[INFO] removing $src"
+    rm -rf $src
+fi

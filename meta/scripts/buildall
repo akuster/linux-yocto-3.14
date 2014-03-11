@@ -1,0 +1,538 @@
+#!/bin/bash
+
+# Script to build all possible BSP branches in a git yocto kernel tree.
+# Copyright 2012 Wind River.  Licensed under the GPLv2 included herein
+# by reference.
+
+# Requirements:
+#	Toolchain for each arch.
+#	$PATH which includes the above.
+#	Proper CROSS_COMPILE (per arch) settings; see defaults below.
+
+# Optional:
+#	ccache
+#	distcc
+
+#
+# Stick all your customizations, local $PATH additions in the below.
+#
+if [ -f $HOME/.buildallrc ]; then
+	echo Sourcing custom settings in $HOME/.buildallrc
+	source $HOME/.buildallrc
+fi
+
+if [ -z "$JOBS" ]; then
+	JOBS=20
+fi
+
+if [ -z "$NICE" ]; then
+	NICE=15
+fi
+
+# The (bare) git tree that you want build tested.
+# TREE=~/workdir/foo.git
+#   or
+# TREE=git://some.site.com/linux.git
+# both absolute paths and git repos are valid inputs
+if [ -z "$TREE" ]; then
+	TREE=git://git.yoctoproject.org/linux-yocto-3.4
+fi
+
+# Name of dir created for containing checked out src to build from
+if [ -z "$LINUX_SRC" ]; then
+	LINUX_SRC=linux
+fi
+
+# Name of dir created for bare clone used as base tree.
+if [ -z "$DEFKERN" ]; then
+	DEFKERN=default_kernel
+fi
+
+# Where all the radioactive fallout is contained
+if [ -z "$BUILDALL" ]; then
+	BUILDALL=kernel_builds
+fi
+
+# If non fatal warnings are issued by this script, they are here
+if [ -z "$WARN_LOG" ]; then
+	WARN_LOG=warnings.txt
+fi
+
+# to save on clones, check std location.
+if [ -z "$REFERENCE" ]; then
+	REFERENCE=~/git/linux
+fi
+
+# Sane defaults
+if [ -z "$PPC_CROSS_COMPILE" ]; then
+	PPC_CROSS_COMPILE=powerpc-poky-linux-
+fi
+
+if [ -z "$MIPS_CROSS_COMPILE" ]; then
+	MIPS_CROSS_COMPILE=mips-poky-linux-
+fi
+
+if [ -z "$ARM_CROSS_COMPILE" ]; then
+	ARM_CROSS_COMPILE=arm-poky-linux-gnueabi-
+fi
+
+if [ -z "$X86_CROSS_COMPILE" ]; then
+	X86_CROSS_COMPILE=i586-poky-linux-
+fi
+
+if [ -z "$X86_64_CROSS_COMPILE" ]; then
+	X86_64_CROSS_COMPILE=x86_64-poky-linux-
+fi
+
+MYPATH=`dirname $0`
+CONFIGME=$MYPATH/configme
+UPDATEME=$MYPATH/updateme
+
+if [ -d $TREE ]; then
+	TREE=`readlink -f $TREE`
+fi
+
+if [ ! -x $CONFIGME ];then
+	echo Error: Cant locate configuration script \"configme\"
+	echo Was looking for $CONFIGME
+	exit 1
+fi
+
+if [ ! -x $UPDATEME ];then
+	echo Error: Cant locate meta series refresh script \"updateme\"
+	echo Was looking for $UPDATEME
+	exit 1
+fi
+
+if [ -z "$META_DIR" ]; then
+	META_DIR=meta
+fi
+
+if [ -z "$META_BRANCH" ]; then
+	META_BRANCH=meta
+fi
+
+######## build one branch; assumes it is checked out and config'd ######
+build_branch()
+{
+
+	if [ -z "$ARCH" ]; then
+		echo ARCH not set, cant build $BUILD_DIR
+		return 1
+	fi
+
+	if [ "$ARCH" == "powerpc" ];then
+		CROSS_COMPILE=$PPC_CROSS_COMPILE
+	elif [ "$ARCH" == "i386" ];then
+		CROSS_COMPILE=$X86_CROSS_COMPILE
+	elif [ "$ARCH" == "x86" ];then
+		CROSS_COMPILE=$X86_CROSS_COMPILE
+	elif [ "$ARCH" == "x86_64" ];then
+		CROSS_COMPILE=$X86_64_CROSS_COMPILE
+	elif [ "$ARCH" == "mips" ];then
+		CROSS_COMPILE=$MIPS_CROSS_COMPILE
+	elif [ "$ARCH" == "arm" ];then
+		CROSS_COMPILE=$ARM_CROSS_COMPILE
+	else
+		echo Unknown architecture: $ARCH -- Giving up.
+		return 1
+	fi
+
+	# Find the arch specific gcc for the toolchain
+	which $CROSS_COMPILE\gcc > /dev/null 2>&1
+	if [ $? != 0 ]; then
+		echo Error: cant find a $CROSS_COMPILE\gcc in PATH
+		echo PATH is: $PATH
+		exit 1
+	fi
+
+	# Sanity checks specific to distcc/ccache usage
+	if [ ! -z "$CCACHE_PREFIX" ]; then
+		which ccache > /dev/null 2>&1
+		if [ $? != 0 ]; then
+			echo Warning: cant find ccache in PATH
+		fi
+
+		TC_GCC=`which $CROSS_COMPILE\gcc`
+		cmp -s $TC_GCC $CCACHE
+		if [ $? != 0 ]; then
+			echo Warning: $TC_GCC doesnt point at ccache
+			echo perhaps your toolchain is ahead of ccache in your path\?
+		fi
+	fi
+
+	export ARCH
+	export CROSS_COMPILE
+
+	command time --quiet -f '%E' -o time.log nice -n $NICE \
+		make -j$JOBS O=$BUILD_DIR > $BUILD_DIR/build.log 2>&1
+
+	return $?
+}
+
+debare()
+{
+	mkdir .git
+	if [ $? != 0 ]; then
+		echo debare: you already have a .git in $PWD
+		echo fix your shit
+		exit 1
+	fi
+	mv * .git
+	git config core.bare false
+}
+
+# We could omit this step, but it makes the remainder of things
+# indifferent to where things came from.
+clone_local()
+{
+	git clone --bare --shared $TREE $DEFKERN > /dev/null 2>&1
+	if [ $? != 0 ]; then
+		echo clone of $TREE failed
+		echo I tried to run: \"git clone --bare --shared $TREE $DEFKERN\"
+		exit 1
+	fi
+}
+
+clone_ref()
+{
+	if [ -d $REFERENCE ]; then
+		REF="--reference $REFERENCE"
+	fi
+	git clone --bare $REF $TREE $DEFKERN > /dev/null 2>&1
+	if [ $? != 0 ]; then
+		echo clone of $TREE failed
+		echo I tried to run: \"git clone --bare $REF $TREE $DEFKERN\"
+		exit 1
+	fi
+}
+
+stage_src()
+{
+	git clone --bare --shared --no-checkout $DEFKERN $LINUX_SRC>/dev/null 2>&1
+	if [ $? != 0 ]; then
+		echo shared clone of default_kernel failed
+		echo I tried to run: \"git clone --bare --shared --no-checkout $DEFKERN $LINUX_SRC\"
+		exit 1
+	fi
+
+	# De-bare the clone.  There should be a command for this...
+	cd $LINUX_SRC
+	debare
+
+	git checkout -f $META_BRANCH > /dev/null 2>&1
+	if [ $? != 0 ];then
+		echo checkout of meta branch \"$META_BRANCH\" failed
+		exit 1
+	fi
+}
+
+get_branch()
+{
+	if [ ! -f "$1" ]; then
+		echo get_branch: $1: file does not exist >&2
+		return
+	fi
+	for i in `cat $1 |grep _branch_begin| awk '{print $3}'` ; do
+		echo -n $i/
+	done | sed 's,/$,,'
+}
+
+fail_mail()
+{
+	local META=$1
+	local FAILLOG=$2
+	local DIR=`dirname $FAILLOG`
+	local FAILMAIL=`mktemp -p /var/tmp`
+	if [ $? != 0 ]; then
+		FAILMAIL=`mktemp -p /tmp`
+	fi
+
+	echo From: $MAILTO > $FAILMAIL
+	echo Date: `date '+%c %z'` >> $FAILMAIL
+	echo Subject: Build of $META failed. >> $FAILMAIL
+	echo >> $FAILMAIL
+	echo The build of $META has failed. >> $FAILMAIL
+	echo -------- error --------------- >> $FAILMAIL
+	grep error: $FAILLOG >> $FAILMAIL
+	echo -------- tail ---------------- >> $FAILMAIL
+	tail -n 30 $FAILLOG >> $FAILMAIL
+	echo ------------------------------ >> $FAILMAIL
+	echo >> $FAILMAIL
+	echo Sincerely, >> $FAILMAIL
+	echo buildall @ `hostname` >> $FAILMAIL
+
+	git send-email --from $MAILTO --quiet --confirm=never --to $MAILTO \
+		--smtp-server=$SMTPSERVER $FAILMAIL >> $DIR/mail.log 2>&1
+
+	if [ $? != 0 ]; then
+		echo tried to notify $MAILTO about something, but failed.
+		echo See $DIR/mail.log for details.
+	fi
+	cp $FAILMAIL $DIR
+	rm -f $FAILMAIL
+}
+
+######################### start #####################
+
+PASS_CFG=0
+FAIL_CFG=0
+PASS_BUILD=0
+FAIL_BUILD=0
+
+which mkimage > /dev/null 2>&1
+if [ $? != 0 ]; then
+	echo Error -- you dont have a mkimage in your path, needed for
+	echo powerpc builds.  Go get one from the u-boot tree.
+	exit 1
+fi
+
+if [ -n "$MAILTO" ]; then
+	SMTPSERVER=`git config --get sendemail.smtpserver`
+	if [ -z "$SMTPSERVER" ]; then
+		echo Error: you need a smptserver setting in \$HOME/.gitconfig or a SMTPSERVER
+		echo setting in your \".buildallrc\" file if you want to have build failures sent to you.
+		exit 1
+	fi
+	which git | grep -q sysroot
+	if [ $? = 0 ]; then
+		echo Error: git send-email in the poky sysroot is non functional.
+		echo Please ensure the sysroot PATH for toolchain is _after_ normal PATH.
+		exit 1
+	fi
+fi
+
+if [ -d $BUILDALL ]; then
+	echo Destination dir \"$BUILDALL\" already exists.
+	echo Assuming you are resuming an interrupted/failed run.
+	RESUME=1
+	sleep 1
+fi
+
+echo Using $TREE as upstream source
+echo You can use \"export TREE=git://myhost.com/mypath\" to change.
+echo Doing initial setup....
+mkdir -p $BUILDALL
+cd $BUILDALL
+echo "Infrastructural warnings from this run:" > $WARN_LOG
+
+if [ -d $DEFKERN ]; then
+	echo Dir $DEFKERN already exists - assuming resuming prev. run.
+	echo Assuming you are resuming an interrupted/failed run.
+	RESUME=1
+else
+	if [ -d $TREE ]; then
+		TREE=`readlink -f $TREE`
+		clone_local
+	else
+		clone_ref
+	fi
+fi
+
+# Set us up a linux dir and checkout meta
+if [ ! -d $LINUX_SRC ]; then
+	stage_src
+else
+	echo $LINUX_SRC exists, skipping staging of source code.
+	cd $LINUX_SRC
+fi
+
+# Create a mapping between scc and meta series and arch
+META_LIST=`mktemp`
+for i in `grep -Rl '^define KMACHINE' $META_DIR/cfg/kernel-cache` ; do
+	SCC=`basename $i .scc`
+	KMACHINE=`grep '^define KMACHINE' $i | head -n1 | awk '{print $3}'`
+	KTYPE=`grep '^define KTYPE'       $i | head -n1 | awk '{print $3}'`
+	KARCH=`grep '^define KARCH'       $i | head -n1 | awk '{print $3}'`
+	META=$KMACHINE-$KTYPE-meta
+
+	#        1        2      3     4    5 
+	echo $KMACHINE $KTYPE $KARCH $META $SCC >> $META_LIST
+done
+
+if [ ! -z "$RANDOMIZE" ]; then
+	mv $META_LIST $META_LIST~
+	sort -R < $META_LIST~ > $META_LIST
+	rm $META_LIST~
+fi
+
+# Move off meta branch before making meta content become untracked
+git checkout -f standard/base 2>/dev/null
+if [ $? != 0 ]; then
+	echo fatal: checkout of standard/base failed
+	exit 1
+fi
+$MYPATH/kgit-checkpoint -r > /dev/null 2>&1
+
+# since we are no longer on meta branch, meta dir will be preceeded by a dot
+META_DIR=".$META_DIR"
+
+for i in `cat $META_LIST| awk '{print $4}'` ; do
+	KMACHINE=`grep $i $META_LIST | awk '{print $1}'`
+	ARCH=`grep $i $META_LIST | awk '{print $3}'`
+	KTYPE=`grep $i $META_LIST | awk '{print $2}'`
+	META=`grep $i $META_LIST | awk '{print $4}'`
+	SCC=`grep $i $META_LIST | awk '{print $5}'`
+	METAPATH=$META_DIR/cfg/scratch/$META
+
+#	echo KMACH:$KMACHINE ARCH:$ARCH KTYPE:$KTYPE META:$META SCC:$SCC
+
+	if [ ! -z "$MAX_BUILDS" ]; then
+		TOTAL_BUILD=`expr $PASS_BUILD + $FAIL_BUILD`
+		if [ $TOTAL_BUILD -eq $MAX_BUILDS ]; then
+			echo MAX_BUILDS value of $MAX_BUILDS reached, exiting.
+			break
+		fi
+	fi
+
+	if [ ! -z "$BLACKLIST" ]; then
+		echo $BLACKLIST | grep -q "$i"
+		if [ $? = 0 ]; then
+			echo Skipping $i, since blacklisted
+			continue
+		fi
+	fi
+
+	if [ ! -z "$BLACKREGEX" ]; then
+		echo $i | grep -q "$BLACKREGEX"
+		if [ $? = 0 ]; then
+			echo Skipping $i, matches blacklisted regex \"$BLACKREGEX\"
+			continue
+		fi
+	fi
+
+	if [ ! -z "$WHITELIST" ]; then
+		echo $WHITELIST | grep -q "$i"
+		if [ $? != 0 ]; then
+			echo Skipping $i, since not explicitly whitelisted
+			continue
+		fi
+	fi
+
+	if [ ! -z "$WHITEREGEX" ]; then
+		echo $i | grep -q "$WHITEREGEX"
+		if [ $? != 0 ]; then
+			echo Skipping $i - does not match whitelisted regex \"$WHITEREGEX\"
+			continue
+		fi
+	fi
+
+	$UPDATEME -DKDESC=$KMACHINE:$KTYPE $KARCH $KMACH > updateme.log 2>&1
+	if [ $? != 0 ]; then
+		echo Generation of meta series from scc failed for $SCC
+		echo See updateme.log for details
+		exit 1
+	fi
+	rm -f updateme.log
+
+	if [ ! -f $METAPATH ]; then
+		echo Cant find meta series for $i
+		echo I expected to find $METAPATH
+		exit 1
+	fi
+
+	BRANCH=`get_branch $METAPATH`
+	if [ -z "$BRANCH" ]; then
+		echo Cant find branch for $META
+		exit 1
+	fi
+
+	git rev-parse $BRANCH > /dev/null 2>&1
+	if [ $? != 0 ]; then
+		BRANCH=$BRANCH/base
+		git rev-parse $BRANCH > /dev/null 2>&1
+		if [ $? != 0 ]; then
+			echo Cant find base branch \($BRANCH\) for $META
+			exit 1
+		fi
+	fi
+
+	git checkout -f $BRANCH 2>/dev/null
+	if [ $? != 0 ]; then
+		echo fatal: checkout of $BRANCH \(for $i\) failed
+		exit 1
+	fi
+	
+	BUILD_DIR=../$i
+
+	if [ ! -z "$RESUME" ]; then
+		if [ -f $BUILD_DIR/00-PASS ]; then
+			echo Skipping $i build since dir already passed.
+			echo Remove it if you want a rebuild of it from scratch
+			continue
+		else
+			echo Doing nuke-n-pave on old $i build since it previously failed.
+			rm -rf $BUILD_DIR
+		fi
+	else
+		if [ -d "$BUILD_DIR" ]; then
+			echo `basename $0`: Error: Dir \"$BUILD_DIR\" should not already exist
+			echo We dont appear to be resuming a build sequence, so giving up.
+			exit 1
+		fi
+	fi
+
+	# configme looks for the meta series in play in $META_DIR
+	cat $METAPATH > $META_DIR/meta-series
+	$CONFIGME -o ../$i $KTYPE $KMACHINE > cfg.log 2>&1
+	if [ $? != 0 ]; then
+		echo Configuration of $i failed
+		mv cfg.log $BUILD_DIR
+		touch $BUILD_DIR/00-FAIL
+		FAIL_CFG=$[$FAIL_CFG + 1]
+		continue
+	fi
+
+	PASS_CFG=$[$PASS_CFG + 1]
+	mv cfg.log $BUILD_DIR
+
+	echo -n "Building $BRANCH for $i, status: "
+	build_branch > error.log 2>&1
+	if [ $? != 0 ]; then
+		echo -n FAILED.
+		touch $BUILD_DIR/00-FAIL
+		FAIL_BUILD=$[$FAIL_BUILD + 1]
+		if [ ! -f $BUILD_DIR/build.log ]; then
+			mv error.log $BUILD_DIR/build.log
+		fi
+		fail_mail $i $BUILD_DIR/build.log
+	else
+		echo -n passed.
+		touch $BUILD_DIR/00-PASS
+		PASS_BUILD=$[$PASS_BUILD + 1]
+	fi
+	if [ -f time.log ]; then
+		echo " (`cat time.log`)"
+		rm -f time.log
+	else
+		 echo
+	fi
+	if [ -s error.log ] ; then
+		echo On branch $BRANCH for $i: >> ../$WARN_LOG
+		cat error.log >> ../$WARN_LOG
+	fi
+	rm -f error.log
+done
+rm $META_LIST
+
+cd ..
+
+TOTAL_CFG=`expr $PASS_CFG + $FAIL_CFG`
+TOTAL_BUILD=`expr $PASS_BUILD + $FAIL_BUILD`
+
+echo ========================= Build Summary ============================
+echo Kernel config: Total: $TOTAL_CFG, Pass: $PASS_CFG, Fail: $FAIL_CFG
+echo Kernel build:  Total: $TOTAL_BUILD, Pass: $PASS_BUILD, Fail: $FAIL_BUILD
+echo ====================================================================
+
+RET=`expr $FAIL_CFG + $FAIL_BUILD`
+if [ $RET != "0" ];then
+	echo Do a \"ls \*\/\*FAIL\*\" for more details.
+fi
+exit $RET
+
+########################################################
+# Local variables:
+# enable-local-eval: t
+# hack-local-variables-hook: save-buffers-kill-emacs
+# end:

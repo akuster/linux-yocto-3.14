@@ -1,0 +1,699 @@
+#!/bin/bash
+
+#  (kgit-scc), (process a series of .scc files into a full repository)
+
+#  Copyright (c) 2008-2011 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+# Example full build invocation:
+# 
+#  kgit scc -v \
+#   -I <path to>/kernel-cache \
+#      <path to kernel.org reference git repo> linux
+#
+
+# For consistent behaviour with "grep -w"
+LC_ALL=C
+export LC_ALL
+
+path=`dirname $0`
+. $path/kgit
+PATH=`cd $path; pwd`:$PATH
+
+# For consistent behaviour with "grep -w"
+LC_ALL=C
+export LC_ALL
+
+usage()
+{
+cat <<EOF
+
+ kgit-scc [-e <dir>] [--prep <feat1 feat2 feat3>]
+          [-v] [-h] [-j <count>] [-I<dirs to search>] <input> <output>
+
+  A front end to the 'series code compiler (scc)'. It facilitiates
+  using scc to build a complete repository or to search/interpret 
+  .scc (source) files without actually building a tree.
+
+   -n         :  don't remove existing object files before
+                 starting the build
+   -e <dir>   :  run executables and put the output in this
+                 subdirectory directory of <output>
+   --src      :  find all of the source files (.scc) matching the pattern
+                 <input> in the passed include directories
+   --prep:    : features that should be used to prep a repository build
+   --meta-dir <metadir>:  dir with meta content (default "meta")
+   --meta-branch <metabr>:  branch to store meta content (default "meta")
+
+   -I <dirs>  : directories to search for .scc files
+   -i <dirs>  : directories to serach for source repos
+   -j         : jobs. launch at most 'count' jobs when building the
+                repository. Default is 10.
+
+   <input> : base repository. if both input and output are passed, then
+             a full repository build is triggered.
+   <output>: directory in which to place the output of the compilation
+
+   -h: help
+   -v: verbose
+
+EOF
+}
+
+wait_for_jobs()
+{
+    local message="$1"
+    shift
+    local jlist="$@"
+    
+    if [ -n "$jlist" ]; then
+	echo ""
+	echo "    $message"
+	echo ""
+
+	wait $jlist
+    fi
+}
+
+search_includes()
+{
+    search_expr=$1
+    parent_leaf=$2
+
+    for dir in $search_dirs; do
+	if [ -n "$tgt" ]; then
+	    continue
+	fi
+
+	found=`find $dir/ -regex "$search_expr"`
+	if [ -n "$found" ]; then
+	    for f in $found; do
+		if [ -n "$tgt" ]; then
+		    continue
+		fi
+		if [ "$parent_leaf" != "any" ]; then
+		    x=`grep -e ".*scc_leaf.*" -e ".*define.*KTYPE" $f`
+		    if [ -n "$x" ]; then
+			echo "$x" | grep -q -w $parent_leaf
+			if [ $? -eq 0 ]; then
+			    tgt=$f
+			fi
+		    fi
+		else
+		    tgt=$f
+		fi
+	    done
+	fi
+    done
+
+    echo $tgt
+}
+
+# search for the descriptions (.scc files) for a list
+# of features.
+find_feature_descriptions()
+{
+    flist=$@
+    out_list=""
+
+    for feat in $flist; do
+	# exact matches in the search directories for the passed
+	# list of features
+	f=`search_includes ".*/$feat" any`
+	if [ -n "$out_list" ]; then
+	    out_list=`echo "$out_list"; echo "$f"`
+	else
+	    out_list=`echo "$f"`
+	fi
+    done
+
+    echo "$out_list"
+}
+
+get_feat_list()
+{
+    dir=$1
+    check_leaf=$2
+
+    flist=$(find $dir -maxdepth 3 -regex '.*[a-zA-Z0-9_]*\.scc$')
+    flist=$(echo "$flist" | sort)
+    for f in $flist; do
+	if [ -n $check_leaf ]; then
+	    grep -q -e ".*scc_leaf.*" -e ".*define.*KTYPE" $f
+	    if [ $? -eq 0 ]; then
+		if [ -n "$leaf_flist" ]; then
+		    leaf_flist=`echo "$leaf_flist"; echo "$f"`
+		else
+		    leaf_flist=`echo "$f"`
+		fi
+	    fi
+	else
+	    if [ -n "$leaf_flist" ]; then
+		leaf_flist=`echo "$leaf_flist"; echo "$f"`
+	    else
+		leaf_flist=`echo "$f"`
+	    fi
+	fi
+    done
+
+    echo "$leaf_flist"
+}
+
+# command line processing
+search_dirs=
+vlevel=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+	-v|--v)
+		verbose=t
+		vlevel=`expr $vlevel + 1`
+		;;
+	-e|--e)
+		exec_dir=$2
+		shift
+		;;
+	--init)
+	        init=t
+		;;
+	--apply)
+	        apply=t
+		;;
+	--compile)
+	        compile=t
+		;;
+	--link)
+	        link=t
+		;;
+	--exec)
+	        exec=t
+		;;
+	--clean)
+	        clean=t
+		;;
+	-j|--jobs)
+		jobs=$2
+		shift
+		;;
+	--meta-dir)
+		top_meta_dir="$2"
+		shift
+		;;
+	--meta-branch)
+		meta_branch="$2"
+		shift
+		;;
+	--src)
+		src=t
+		;;
+	--resume)
+                resume=t
+		;;
+	-n|--noclean|--nc)
+	        noclean=t
+		;;
+	-I*|--I*)  if [ "$1" == "-I" ] || [ "$1" == "--I" ]; then
+	              x=$2; shift;
+	           else
+	              x=`echo $1 | sed s%^\-*I%%`
+                   fi
+                   search_dirs="$search_dirs $x"
+		   inc_dirs="$inc_dirs -I $x"
+                ;;
+        --prep) prep_features=$2
+                shift
+                ;;
+        -i*|--i*)  if [ "$1" == "-i" ] || [ "$1" == "--i" ]; then
+	              x=$2; shift;
+	           else
+	              x=`echo $1 | sed s%^\-*i%%`
+                   fi
+                   repo_dir="$repo_dir -I $x"
+	       ;;
+	-h|--h|--help) 
+	        usage
+                exit;
+                ;;
+        -*)   
+                echo Invalid arg \"$1\".
+                usage
+                exit
+               ;;
+	*)
+	        break
+		;;
+    esac
+    shift
+done
+
+if [ -z "$1" ]; then
+    echo no args given.  Try \"-h\".
+    usage
+    exit
+fi
+
+if [ -z "$jobs" ]; then
+    jobs=10
+fi
+
+use_per_build_obj_dir=t
+
+
+if [ -z "$init" ] && [ -z "$apply" ] && [ -z "$compile" ] &&
+   [ -z "$link" ] && [ -z "$exec" ] && [ -z "$clean" ]; then
+    # nothing was indicated, so lets do it all!
+    init=t
+    compile=t
+    link=t
+    exec=t
+    apply=t
+    clean=t
+fi
+
+if [ -n "$verbose" ]; then
+    vflags="-v"
+    if [ $vlevel -eq 2 ]; then
+	vflags="-v -v"
+    fi
+fi
+
+# if just one parm is left, it is output.
+# if two are passed, it is input and output and we 
+# trigger a full repo build
+output=$1
+if [ -n "$2" ]; then
+    input=$1
+    output=$2
+    full_build=t
+fi
+
+if [ -n "$resume" ]; then
+    if [ ! -d $output ]; then
+	echo ERROR: asked to resume but output dir \"$output\" does not exist
+	exit 1
+    fi
+fi
+
+if [ -z "$top_meta_dir" ]; then
+	top_meta_dir=meta
+fi
+if [ -z "$meta_branch" ]; then
+	meta_branch=meta
+fi
+meta_dir=$top_meta_dir/cfg/scratch
+exec_dir=$meta_dir/obj
+
+if [ -n "$src" ]; then
+    pattern=$output
+
+    for dir in $search_dirs; do
+	found=`find $dir/ -name "$pattern"`
+	if [ -n "$found" ]; then
+	    for f in $found; do
+		tgt="$tgt $f"
+	    done
+	fi
+    done
+    echo "$tgt"
+
+    # flee, we are done
+    exit 0
+fi
+
+if [ -n "$input" ] && [ ! -d "$input" ]; then
+    echo "ERROR. '$input' is not a directory"
+    exit
+fi
+if [ -n "$output" ] && [ ! -d "$output" ]; then
+    mkdir "$output"
+    if [ ! $? -eq 0 ]; then
+	echo "ERROR. '$output' is not a directory"
+	exit
+    fi
+fi
+
+echo ""
+echo ""
+
+phase_count=1
+if [ -z "$clean" ]; then
+    if [ -z "$noclean" ]; then
+        # we are allowed to tidy up ...
+	echo " phase # $phase_count) cleaning existing object files"
+	if [ -d "$exec_dir" ]; then
+	    rm -f $exec_dir
+	fi
+	let phase_count=$phase_count+1
+    fi
+fi
+
+# create the directory that will hold all of our work
+if [ ! -d "$exec_dir" ]; then
+    mkdir -p $output/$exec_dir
+fi
+
+# find the base version from the kernel-caches
+new_inc_dirs=
+nwe_search_dirs=
+echo " phase # $phase_count) migrating include dirs"
+let phase_count=$phase_count+1
+
+if [ -z "$resume" ]; then
+    for dir in $search_dirs; do
+	if [ -d $dir ]; then
+	    if [ -e $dir/kver ]; then
+		base_ver=`cat $dir/kver`
+            else
+                echo WARNING: no file $dir/kver to set base version
+	    fi
+
+	    abs_dir=$(cd $dir; pwd)
+
+	    last_dir=`basename $abs_dir`
+
+ 	    echo "   copying $dir to $output/$top_meta_dir/cfg"
+ 	    (
+		mkdir -p $output/$top_meta_dir/cfg/$last_dir
+		cd  $output/$top_meta_dir/cfg/$last_dir
+ 		tar -C $abs_dir --exclude=.git --exclude=docs -cpf - . | tar xpf - .
+	   
+		captured_dir=`pwd`
+            )
+
+	    new_inc_dirs="$new_inc_dirs -I `cd $output/$top_meta_dir/cfg/$last_dir; pwd`"
+	    new_search_dirs="$new_search_dirs `cd $output/$top_meta_dir/cfg/$last_dir; pwd`"
+        else
+            echo WARNING: search dir $dir does not exist
+	fi
+    done
+else
+    # resuming
+    old_pwd=`pwd`
+    if [ ! -d $output/$top_meta_dir/cfg/ ]; then
+	echo ERROR: something evil happened: $output/$top_meta_dir/cfg/ is gone
+	exit 1
+    fi
+    cd $output/$top_meta_dir/cfg/
+    for d in `ls | grep cache`; do
+	new_inc_dirs="$new_inc_dirs -I `cd $d; pwd`"
+	new_search_dirs="$new_search_dirs `cd $d; pwd`"
+    done
+    cd $old_pwd
+
+    if [ -e $d/kver ]; then
+	base_ver=`cat $d/kver`
+    else
+        echo WARNING: no file $d/kver to set base version
+    fi
+fi
+inc_dirs=$new_inc_dirs
+search_dirs=$new_search_dirs
+
+find_executables()
+{
+    old_pwd=`pwd`
+    cd $meta_dir
+    count=0
+    exec_total=0
+    for d in `ls | grep \\\-meta`; do
+	f=`echo $d | sed 's/-meta//'`
+	executables="$executables $f"
+	count=$[$count+1]
+	exec_total=$[$exec_total+1]
+    done
+    cd $old_pwd
+}
+
+if [ -n "$resume" ]; then
+    echo "[INFO] resuming existing tree generation"
+    echo "         includes: $inc_dirs"
+    echo "         search: $search_dirs"
+fi
+
+if [ -n "$init" ]; then
+    if [ -n "$full_build" ]; then
+	if [ ! -d $output/.git ]; then
+	    echo " phase # $phase_count) cloning source repository"
+
+	    if [ -z "$base_ver" ]; then
+		echo "ERROR. No base branch version found, exiting"
+		exit 1
+	    fi
+
+	    kgit-init --meta-dir $top_meta_dir --meta-branch $meta_branch -v $input $base_ver $output
+	    if [ $? -ne 0 ]; then
+		echo "ERROR. Unable to clone source repository $input"
+		exit 1
+	    fi
+	    (cd $output; git config --global guilt.autotag 0)
+	    # tidy up any files init left uncommitted
+	    (cd $output;
+		for f in `git ls-files -m`; do
+		    git add $f
+		done
+		git commit -s -m "kgit: creating baseline state"
+	    )
+	fi
+	let phase_count=$phase_count+1
+    fi
+fi
+
+if [ -z "$base_ver" ]; then
+    for dir in $search_dirs; do
+	if [ -d $dir ]; then
+	    if [ -e $dir/kver ]; then
+		base_ver=`cat $dir/kver`
+	    fi
+	fi
+    done
+fi
+
+prep_feature_desc=`find_feature_descriptions $prep_features`
+
+if [ -n "$link" ] || [ -n "$compile" ]; then
+    count=1
+    executables=""
+    old_dir=`pwd`
+    exec_total=0
+    failed=`mktemp`
+    for dir in $search_dirs; do
+	if [ -d $dir ]; then
+	    echo ""
+	    echo ""
+	    echo " phase # $phase_count) linking $dir"
+
+	    feat_list=`get_feat_list $dir t`
+	    total=$(echo "$feat_list" "$prep_feature_desc" | tr ' ' '\n' | wc -l)
+
+	    bops=
+	    jcount=0
+	    for f in $prep_feature_desc $feat_list; do	    
+		if [ $? -eq 0 ]; then
+		    outname=`basename $f .scc`
+
+		    if [ ! -z "$BLACKLIST" ]; then
+		    	echo $BLACKLIST | grep -q "$outname"
+		    	if [ $? = 0 ]; then
+		    		echo Skipping $outname, since blacklisted
+		    		continue
+		    	fi
+		    fi
+
+		    if [ ! -z "$BLACKREGEX" ]; then
+		    	echo $outname | grep -q "$BLACKREGEX"
+		    	if [ $? = 0 ]; then
+		    		echo Skipping $outname, matches blacklisted regex \"$BLACKREGEX\"
+		    		continue
+		    	fi
+		    fi
+
+		    if [ ! -z "$WHITELIST" ]; then
+		    	echo $WHITELIST | grep -q "$outname"
+		    	if [ $? != 0 ]; then
+		    		echo Skipping $outname, since not explicitly whitelisted
+		    		continue
+		    	fi
+		    fi
+
+		    if [ ! -z "$WHITEREGEX" ]; then
+		    	echo $outname | grep -q "$WHITEREGEX"
+		    	if [ $? != 0 ]; then
+		    		echo Skipping $outname - does not match whitelisted regex \"$WHITEREGEX\"
+		    		continue
+		    	fi
+		    fi
+
+		    # this is where we put 'jcount' jobs into the background
+		    echo "   [$count/$total] scc --force -o $outname-meta $repo_dir `basename $f`"
+		    (
+			if [ -n "$use_per_build_obj_dir" ]; then
+                            if [ ! -d $output/$exec_dir/$outname ];then
+				mkdir -p $output/$exec_dir/$outname
+                            fi 
+			    cd $output/$exec_dir/$outname
+			else
+			    cd $output/$exec_dir
+			fi
+
+                        # the magic
+			scc --force -o $outname-meta $inc_dirs $repo_dir $f
+			if [ $? -ne 0 ]; then
+			    echo "ERROR: could not generate $outname-meta"
+			    echo $outname-meta >> $failed
+			    exit 1
+			fi
+			mv $outname-meta ../..
+                    ) &
+		    op=$!
+ 		    bops="$bops $op"
+		    let jcount=$jcount+1
+
+		    if [ "$jcount" -ge "$jobs" ]; then
+			wait_for_jobs \
+                           "Waiting for $jcount link jobs to complete ..." \
+                           $bops
+			bops=
+			jcount=0
+		    fi
+
+		    executables="$executables $outname"
+		    let count=$count+1
+		    let exec_total=$exec_total+1
+		fi
+		cd $old_dir
+	    done
+
+	    wait_for_jobs \
+                "Waiting for series linkage to complete ..." $bops
+
+	    let phase_count=$phase_count+1
+	fi
+    done
+fi
+
+if [ -s "$failed" ]; then
+	echo ERROR: aborting due to meta series generation failure:
+	cat $failed
+	rm -f $failed
+	exit 1
+fi
+
+if [ -n "$apply" ]; then
+    if [ -n "$full_build" ]; then
+	echo " phase # $phase_count) running meta series"
+
+	old=`pwd`
+	cd $output
+
+	if [ -z "$executables" ]; then
+	    find_executables
+	fi
+
+	# exec_total was calculuated when we generated all the meta_series
+	total=$exec_total
+	start_branch=`git branch --no-color | sed -e '/^[^*]/d' -e 's/* \(.*\)/\1/'`
+	count=1
+	for e in $executables; do
+	    # this will trigger a complete copy of all the config
+	    # fragments into the repository. Normal meta series
+	    # process will also copy kconf files to the repo, but 
+	    # only when a branch is being first populated. If a branch
+	    # has already been created AND a meta series has a conditional
+	    # configuration, it won't be copied since the branch will
+	    # be skipped to speedup execution.
+	    if [ -n "$verbose" ]; then
+		echo "Applying patches [$count/$total]"
+	    fi
+
+	    extra=
+	    echo $prep_features | grep -q -w $e
+	    if [ $? -eq 0 ]; then
+		echo "[INFO] prep feature found, full patch validation will be done"
+		extra=--continue
+	    fi
+
+            fbranches=`grep "_force_branch" $meta_dir/$e-meta | head -n 1 | cut -d' ' -f3`
+	    if [ -n "$fbranches" ]; then
+		git show-ref --quiet --verify -- "refs/heads/$fbranches"
+		if [ $? -eq 1 ]; then
+		    # a branch doesn't exist, we'll need a full run, but
+		    # make sure --continue isn't already in the flags
+		    echo $extra | grep -q "continue"
+		    if [ $? -eq 1 ]; then
+			extra="--continue"
+		    fi
+		fi
+            fi
+	    if [ -n "$verbose" ]; then
+		echo "running: KMETA=$top_meta_dir kgit-meta $vflags $extra --apply $meta_dir/$e-meta"
+	    fi
+	    KMETA=$top_meta_dir kgit-meta $vflags $extra --apply $meta_dir/$e-meta
+
+	    if [ $? -ne 0 ]; then
+		echo "ERROR. Could not apply meta series $meta_dir/$e-meta"
+		exit 1
+	    fi
+	    if [ -n "$extra" ]; then
+		echo "[INFO] Updating cfg files (kgit-meta --update --kconf $meta_dir/$e-meta)"
+		kgit-meta --update --kconf $meta_dir/$e-meta
+	    fi
+	    
+	    git checkout $start_branch
+
+	    let count=$count+1
+	done
+	let phase_count=$phase_count+1
+	cd $old
+
+        # make the publish clean with respect to the last
+        # meta series used
+	rm -f $top_meta_dir/meta-series
+
+	(cd $output; git config --global guilt.autotag 1)
+    fi
+fi
+
+if [ -n "$apply" ]; then
+    if [ -z "$noclean" ]; then
+        # we are allowed to tidy up ...
+	echo " phase # $phase_count) cleaning new object files"
+	(
+	    cd $output/.git/rebase-apply 2> /dev/null
+	    if [ $? -eq 0 ]; then
+		rm -rf *
+	    fi
+	)
+	(
+	    cd $output/$exec_dir 2> /dev/null
+	    if [ $? -eq 0 ]; then
+		rm -rf *
+		echo "scc object files are placed in this directory" > README
+	    fi
+	)
+	(
+	    cd $output/$meta_dir 2> /dev/null
+	    if [ $? -eq 0 ]; then
+		rm -rf *-meta
+	    fi
+	)
+	let phase_count=$phase_count+1
+    fi
+fi
+
+if [ -s $meta_dir/refresh ]; then
+	echo **********************************************************
+	echo "[INFO]" There are patches needing refresh,
+	echo               See file $meta_dir/refresh
+	echo **********************************************************
+fi

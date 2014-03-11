@@ -1,0 +1,105 @@
+#!/bin/bash
+
+# git config --list -f <filename>
+
+usage()
+{
+cat << EOF
+
+  kgit-feature -v -f --dump -o <file> [<directory>]
+
+    -v: verbose
+    -f: force overwrite output file
+    --dump: dump the contents of <file>
+    <directory>: if --dump is not specified, this is the directory
+                 to process for kernel features
+
+EOF
+}
+
+if [ -z "$1" ]; then
+    usage
+    exit
+fi
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+    --o|-o) output_file=$2
+	    shift
+            ;;
+    --dump) dump=t
+	    ;;
+    -v) verbose=t
+            ;;
+    -f) force=t
+            ;;
+         *) break
+            ;;
+    esac
+    shift
+done
+
+if [ -z "$dump" ]; then
+    directory=$1
+    if [ ! -d "$directory" ]; then
+	echo "ERROR. A valid search directory must be provided"
+	exit 1
+    fi
+
+    files=`cd $directory; find . -name '*.scc' | xargs grep KFEATURE_DESCRIPTION | cut -f1 -d:`;
+    
+    if [ -z "files" ]; then
+	echo "ERROR. No files with feature descriptions were found in $directory"
+	exit 1
+    fi
+
+    if [ -f "$output_file" ] && [ -z "$force" ]; then
+	echo "ERROR. output file \"$output_file\" exists and -f was not supplied"
+	exit 1
+    fi
+    if [ -f "$output_file" ] && [ -n "$force" ]; then
+	rm -f $output_file
+    fi
+    if [ -z "$output_file" ]; then
+	output_file=default.config
+    fi
+
+    section=kernel-options
+    for f in $files; do
+	if [ -n "$verbose" ]; then
+	    echo "Processing: $f"
+	fi
+	
+	# categorize the item as a feature, optional-feature, or config
+	var=feature
+
+	echo $f | grep -q "cfg"
+	if [ $? -eq 0 ]; then
+	    var=config
+	fi
+	echo $f | grep -q "\-enable"
+	if [ $? -eq 0 ]; then
+	    var=feature-optional
+	fi
+	grep KFEATURE_COMPATIBILITY $directory/$f | grep -q optional
+	if [ $? -eq 0 ]; then
+	    var=feature-optional
+	fi
+	
+	value=`echo $f | sed 's%^./%%'`
+	
+	if [ -n "$verbose" ]; then
+	    echo "    git config -f $output_file --add $section.$var $value"
+	fi
+	git config -f $output_file --add $section.$var $value
+    done
+fi
+
+if [ -n "$dump" ]; then
+    if [ -z "$output_file" ]; then
+	output_file=default.config
+    fi
+
+    git config --list -f $output_file
+fi
+

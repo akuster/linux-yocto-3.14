@@ -1,0 +1,508 @@
+#!/bin/bash
+
+# "spp" preprocessor script.
+
+#  Copyright (c) 2010-2013 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+version="0.1"
+
+usage()
+{
+cat << EOF
+
+ spp [--help] [--force] [-i] [-w] [-o outfile] [-D<var>=<value>] [-I<path>] [-v] infiles
+
+      --help:      This message
+      --force:     force overwrite output file if it already exists
+      -D:          define <var> to <value> which will be available to sub scripts
+      -I:          include path <path> will be searched for files
+      -i:          leave intermediate files on failure
+      -w:          only warn on missing files
+      -v:          verbose output
+      -o:          outfile file for processed results. stdout is used if not passed
+
+      infiles      files to preprocess
+
+
+EOF
+}
+
+if [ -z "$1" ]; then
+	usage
+	exit 1
+fi
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	    --help)
+		usage
+		exit
+		;;
+	    -D*|--D*)
+		if [ "$1" == "-D" ] || [ "$1" == "--D" ]; then
+		    x=$2; shift;
+		else
+		    x=`echo $1 | sed s%^-*D%%`
+		fi
+		defines="$defines $x"
+		;;
+	    -I*|--I*)
+		if [ "$1" == "-I" ] || [ "$1" == "--I" ]; then
+		    x=$2; shift;
+		else
+		    x=`echo $1 | sed s%^-*I%%`
+		fi
+		if [ -n "$x" ] && [ -d "$x" ]; then
+		    include_paths="$include_paths $x"
+		fi
+		;;
+	    --force|-f)
+		force=t
+		;;
+	    -i)
+		intermediate=t
+		;;
+	    -w)
+		warn_on_missing=t
+		;;
+	    -o)
+		outfile=$2
+		shift
+		;;
+	    -v) verbose=t
+		;;
+	    *) break
+		;;
+	esac
+	shift
+done
+
+err()
+{
+    echo "$@" 1>&2
+}
+
+warn()
+{
+    err "$@"
+}
+
+# args are the input files
+infiles=$@
+
+processed_files=""
+
+if [ -z "$infiles" ]; then
+    err "ERROR: at least one input file must be supplied"
+    exit 1
+else
+    for f in $infiles; do
+	if [ ! -f "$f" ]; then
+	err "ERROR. input file \"$f\" does not exist"
+	exit 1
+	fi
+    done
+fi
+if [ -n "$outfile" ] && [ -f "$outfile" ]; then
+    if [ -z "$force" ]; then
+	err "ERROR: output file \"$outfile\" exists, and --force was not passed"
+	exit 1
+    fi
+fi
+
+##
+## create variables for use in scripts
+##
+if [ -n "$defines" ]; then
+    vars=$(echo $defines | sed 's/,/ /g')
+    for v in "$vars"; do
+	# eval makes it available for this script
+	eval $v
+    done
+fi
+
+# used by preprocessor directives to define values, very
+# similar to the block above which processes command line
+# values. These could be unified, but it is easier to keep the
+# separate for now
+define()
+{
+    var=$1
+    value="$2"
+
+    # make the variable real
+    eval $var="\"$value\""
+}
+
+search_include_paths()
+{
+    local tgt=$1
+    shift
+    local includes="$@"
+    local exclude_files=""
+    local base
+    local feature_ext="scc"
+
+    if [ -n "$verbose" ]; then
+	echo "search_includes: $tgt"
+	echo "include paths: "
+	for i in $includes; do
+	    echo "   $i"
+	done
+    fi
+
+    # remove the feature extension (if present) from the input name
+    tgt=${tgt%\.$feature_ext}
+    base=`basename $tgt`
+
+    if [ -z "$exclude_files" ]; then
+	exclude_files="/dev/null"
+    fi
+
+    for p in "." $includes; do
+        # target file + default feature extension
+        if [ -f $p/$tgt.$feature_ext ]; then
+            possible=`readlink -f "$p/$tgt.$feature_ext"`
+        # raw target file
+        elif [ -f $p/$tgt ]; then
+            possible=`readlink -f "$p/$tgt"`
+        # special processing test the include directory +
+        # the name of the feature. This saves us doing a massive
+        # set of includes for sub categories includes
+        elif [ -f $p/$tgt/$tgt.$feature_ext ]; then
+            possible=`readlink -f "$p/$tgt/$tgt.$feature_ext"`
+        elif [ -f $p/$tgt/$tgt ]; then
+            possible=`readlink -f "$p/$tgt/$tgt"`
+        # more special processing. test if the included
+        # feature is actually just the name of a directory
+        # AND there is not file with the same name present.
+        # if that is true, then test for:
+        #     <tgt>/<tgt>.extension
+        # in that directory
+        elif [ -f $p/$tgt/$base.$feature_ext ]; then
+            possible=`readlink -f "$p/$tgt/$base.$feature_ext"`
+        elif [ -f $p/$tgt/$base ]; then
+            possible=`readlink -f "$p/$tgt/$base.$feature_ext"`
+        fi
+
+	if [ -n "$possible" ]; then
+	    echo "$exclude_files" | grep -q "$possible"
+	    if [ $? -ne 0 ]; then
+		echo $possible
+		return
+	    fi
+	    possible=
+	fi
+    done
+}
+
+header()
+{
+    echo "#"
+    echo "# spp v$version"
+    echo "# processed: `date`"
+    echo "#"
+    echo "# This is a preprocessor output file, do not edit"
+    echo "#"
+
+    for i in $include_paths; do
+	# strip a trailing /
+	abs_dir=`readlink -f $i`
+	abs_dir2=`cd $i; pwd`
+	if [ x"$abs_dir" != x"$abs_dir2" ]; then
+	    # there is some sort of symlink trickery going on.
+	    # add both dirs to the relocation list
+	    abs_dir="$abs_dir $abs_dir2"
+	fi
+
+	for d in $abs_dir; do
+	    one_less_dir=${d%/}
+	    # strip last path component
+	    one_less_dir=${one_less_dir%/*}
+
+	    echo "reloc_dir $one_less_dir"
+	done
+    done
+
+    echo "#"
+}
+
+# arg1: duration
+# remaining: the processed files
+footer()
+{
+    local duration=$1
+    shift
+    local infiles=$@
+
+    echo "# run time: $duration seconds"
+    echo "# processed files:"
+    for f in $infiles; do
+	echo "# _cfg $f"
+    done
+}
+
+process_file()
+{
+    local in=$1
+    local containing_file=$2
+    shift
+    shift
+    local flags=$@
+    local inherited_inhibit_cfg=""
+    local inherited_inhibit_patch=""
+    local ret=0
+    local done=""
+    local kconf_type
+    local kconf_name
+    local arg1
+    local OLDIFS
+    local fline
+    local include_name
+    local inhibit_cfg
+    local inhibit_patch
+
+    if [ -z "$in" ]; then
+	return
+    fi
+
+    # process the flags to this file processing
+    for flag in $flags; do
+	case $flag in
+	    nocfg) inherited_inhibit_cfg=nocfg
+		;;
+	    nopatch) inherited_inhibit_patch=nopatch
+		;;
+	esac
+    done
+
+    if [ ! -f "$in" ]; then
+	local_includes=`dirname $containing_file`
+	new_in=`search_include_paths $in $include_paths $local_includes`
+	if [ ! -f "$new_in" ]; then
+	    err "ERROR: could not find file $in, included from $containing_file"
+	    return 1
+	fi
+	in=$new_in
+    else
+	in=`readlink -f $in`
+    fi
+
+    echo "$processed_files" | grep -q "$in"
+    if [ $? -eq 0 ]; then
+	echo "# NOTE: feature `basename $in` has already been processed"
+    fi
+    processed_files="$processed_files $in"
+
+
+    OLDIFS=$IFS
+    IFS='
+'
+    echo "# --> file: $in"
+    echo "# flags: $flags"
+    echo "mark `basename $in` start"
+
+    for fline in `cat $in`; do
+	done=""
+
+        # include
+	echo $fline | grep -q "^[[:space:]]*include"
+	if [ $? -eq 0 ]; then
+	    include_name=`echo $fline | cut -f2 -d' '`
+
+	    # if we were called with inhibit flags, passing them along is
+	    # the default
+	    inhibit_cfg=$inherited_inhibit_cfg
+	    inhibit_patch=$inherited_inhibit_patch
+
+	    # if we have a "nocfg" or "nopatch" on the include directive,
+	    # then we need to set the variables so they'll be passed down to
+	    # the nested process call
+	    echo "$fline" | grep -q "[[:space:]]\+nocfg"
+	    if [ $? -eq 0 ]; then
+		inhibit_cfg=nocfg
+	    fi
+	    echo "$fline" | grep -q "[[:space:]]\+nopatch"
+	    if [ $? -eq 0 ]; then
+		inhibit_patch=nopatch
+	    fi
+
+	    IFS=$OLDIFS
+	    process_file $include_name $in $inhibit_cfg $inhibit_patch
+	    ret=$?
+	    if [ $ret -eq 1 ]; then
+		return $ret
+	    fi
+
+	    # we can clear the inhbit flag, only if it wasn't passed into
+	    # us from above. This allows local .cfg files to be processed.
+	    if [ -z "$inherited_inhibit_cfg" ]; then
+		inhibit_cfg=""
+	    fi
+	    if [ -z "$inherited_inhibit_patch" ]; then
+		inhibit_patch=""
+	    fi 
+
+	    done=t
+	    IFS='
+'
+	fi
+
+	## preprocessor define
+	echo $fline | grep -q "^[[:space:]]*#define"
+	local define_ret=$?
+	if [ -z "$done" ] && [ $define_ret -eq 0 ]; then
+	    IFS=$OLDIFS
+	    local define_name=`echo $fline | cut -f2 -d' '`
+	    local define_value=`echo $fline | cut -f3 -d' '`
+	    if [ -z "$define_value" ]; then
+		define_value=t
+	    fi
+
+	    define $define_name $define_value
+
+	    IFS='
+'
+	    done=t
+	fi
+
+	## patch
+ 	echo $fline | grep -q -e "^[[:space:]]*patch"
+	local patch_ret=$?
+	if [ -z "$done" ] && [ $patch_ret -eq 0 ]; then
+	    IFS=$OLDIFS
+	    local patch_name=`echo $fline | cut -f2 -d' '`
+
+	    if [ -n "$inherited_inhibit_patch" ]; then
+		echo "# inhibited patch"
+		echo "true `dirname $in`/$patch_name"
+	    else
+		if [ ! -f `dirname $in`/$patch_name ]; then
+		    local patch_name_new=`search_include_paths $patch_name $include_paths`		    
+		    if [ ! -f "$patch_name_new" ]; then
+			err "ERROR: could not find patch $patch_name, included from $containing_file"
+			return 1
+		    fi
+		    patch_name=$patch_name_new
+		else
+		    patch_name="`dirname $in`/$patch_name"
+		fi
+		
+	        # output the patch
+		echo "patch $patch_name"
+	    fi
+
+	    IFS='
+'
+	    done=t
+	fi
+
+	## kconf
+ 	echo $fline | grep -q -e "^[[:space:]]*kconf" -e "^force[[:space:]]*kconf"
+	local kconf_ret=$?
+	if [ -z "$done" ] && [ $kconf_ret -eq 0 ]; then
+	    IFS=$OLDIFS
+	    arg1=`echo $fline | cut -f1 -d' '`
+	    if [ "$arg1" = "force" ]; then
+		# "force" will insist that its config be processed
+	    	kconf_type=`echo $fline | cut -f3 -d' '`
+	    	kconf_name=`echo $fline | cut -f4 -d' '`
+	    else
+		arg1=""
+	    	kconf_type=`echo $fline | cut -f2 -d' '`
+	    	kconf_name=`echo $fline | cut -f3 -d' '`
+	    fi
+
+	    if [ -n "$inherited_inhibit_cfg" ] && [ -z "$arg1" ]; then
+		echo "# inhibited kconf"
+		echo "true `dirname $in`/$kconf_name"
+	    else
+		if [ ! -f `dirname $in`/$kconf_name ]; then
+		    local kconf_name_new=`search_include_paths $kconf_name $include_paths`
+		    if [ ! -f "$kconf_name_new" ]; then
+			if [ -n "$lazy_filenames" ]; then
+			    warn "WARNING: could not find kconf $kconf_name, included from $containing_file"
+			    kconf_name_new=$kconf_name
+			else
+			    err "ERROR: could not find kconf $kconf_name, included from $containing_file"
+			    return 1
+			fi
+		    fi
+		    kconf_name=$kconf_name_new
+		else
+		    kconf_name="`dirname $in`/$kconf_name"
+		fi
+		
+		# output the kconfig
+		echo "kconf $kconf_type $kconf_name # $arg1"
+	    fi
+	    IFS='
+'
+	    done=t
+	fi
+	if [ -z "$done" ]; then
+	    echo "$fline"
+	fi
+    done
+    IFS=$OLDIFS
+
+    echo "mark `basename $in` end"
+    echo "# <-- done file: $in"
+    echo "#"
+
+    return 0
+}
+
+
+start_time=`date +"%s"`
+
+if [ -n "$outfile" ]; then
+    header > $outfile
+else
+    header
+fi
+
+for f in $infiles; do
+    if [ -z "$fail" ]; then
+	if [ -n "$outfile" ]; then
+	    process_file $f $f >> $outfile
+	    ret=$?
+	    if [ $ret -eq 1 ]; then
+		fail=t
+	    fi
+	else
+	    process_file $f $f
+	    ret=$?
+	    if [ $ret -eq 1 ]; then
+		fail=t
+	    fi
+	fi
+    fi
+done
+
+if [ -n "$fail" ]; then
+    if [ -z "$intermediate" ]; then
+	rm -f $outfile
+    fi
+    exit $ret
+fi
+
+stop_time=`date +"%s"`
+duration=`expr $stop_time - $start_time`
+
+if [ -n "$outfile" ]; then
+    footer $duration $infiles >> $outfile
+else
+    footer $duration $infiles
+fi
+
+exit $ret

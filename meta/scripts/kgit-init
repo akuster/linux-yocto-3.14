@@ -1,0 +1,394 @@
+#!/bin/bash
+
+#  (kgit-init), (initialize a meta-based kernel git tree)
+
+#  Copyright (c) 2008-2011 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+# For consistent behaviour with "grep -w"
+LC_ALL=C
+export LC_ALL
+
+path=`dirname $0`
+. $path/kgit
+
+# copy a defined set of tools/scripts/resources into the tree that
+# we are constructing. We want to make everything available that was
+# used to build the tree.
+install_resources()
+{
+    # look in our directory for:
+    #   kgit-*
+    #   guilt-*
+    #   generate_cfg, kconf_check, configme
+
+    tools_list="kgit kgit-* guilt-* scc spp buildall get_defconfig merge_config.sh pre_config \
+                generate_cfg kconf_check configme patchme updateme createme"
+
+    mkdir -p $meta_dir/scripts/
+    for pattern in $tools_list; do
+	ls $path/$pattern &> /dev/null
+	if [ $? -eq 0 ]; then
+	    cp $path/$pattern $meta_dir/scripts
+	fi
+    done
+}
+
+# make sure you are in the target repo when calling this, it removes all
+# branches that were created as part of an old tree consruction cna
+# provides a clean slate.
+clean_tgt_repo()
+{
+    if [ -n "$verbose" ]; then
+	echo "[INFO] cleaning base clone"
+    fi
+
+    if [ -d .git ]; then
+	# Keep tags that came from kernel.org; delete the rest, i.e.
+	# v3.nn, v2.6.nn and v2.6.nn-rcM and v2.6.nn.M (nn=10,11, ..99, M=0,1, ...99)
+	for tg in `git tag| grep -v 'v2.6.[0-9]\{2\}\(\(-rc[0-9]\{1,2\}\)\{0,1\}$\|\.[0-9]\{1,2\}$\)' |
+                            grep -v 'v3.[0-9]\{2\}\(\(-rc[0-9]\{1,2\}\)\{0,1\}$\|\.[0-9]\{1,2\}$\)'`
+	do
+	    git tag -d $tg > /dev/null
+	done
+
+	# We've come here without an active checkout, on what was a bare
+	# clone, so manually make sure we are on master. We should be on
+	# master anyway, but make sure, otherwise we won't be able to
+	# delete whatever branch we are on.
+	echo 'ref: refs/heads/master' > .git/HEAD
+	for br in `git branch | grep -v '\* master$'`
+	do
+	    git branch -D $br > /dev/null
+	    if [ $? != 0 ]; then
+		echo "[ERROR]: delete of branch $br failed"
+		exit -1
+	    fi
+	done
+    fi
+}
+
+usage()
+{
+cat <<EOF
+
+ kgit-init [-v] [-m <commit message>] 
+           [-c] [--reference <repo>]
+           [-t <initial tag>] <src> [<base_branch>] <tgt_repo>
+ 
+  Initialize an existing or new repository
+
+   -m: the initial commit message to use when creating the repo
+   -t: tag to apply to the repository during creation
+   -c: clean the tgt_repo after the clone completes. This will
+       perform garbage collection and remove all existing 
+       branches (under the assumption they'll be recreated)
+   --reference <repo>: repo to use as the reference during clone
+   --meta-dir <metadir>:  dir with meta content (default "meta")
+   --meta-branch <metabr>:  branch to store meta content (default "meta")
+
+   <src>        : The source repository.
+   <base branch>: optional. indicates a base branch point in the
+                  src repository to use as the base for the
+                  dest repository
+   <tgt_rep>    : repository to initialize. Can exist or not
+                  exist before the command is run.
+
+   -h: help
+   -v: verbose
+
+EOF
+}
+
+# command line processing
+while [ $# -gt 0 ]; do
+    case "$1" in
+	-b|--b)
+		cmdline_branch="$2"
+		shift
+		;;
+	-m|--m)
+		message="$2"
+		init_creates_content=t
+		shift
+		;;
+	-o|--o)
+		dest="$2"
+		shift
+		;;
+	--meta-dir)
+		meta_dir="$2"
+		shift
+		;;
+	--meta-branch)
+		meta_branch="$2"
+		shift
+		;;
+	--reference)
+		reference="$2"
+		shift
+		;;
+	-v|--v)
+		verbose=t
+		;;
+	-c|--c)
+		clean=t
+		;;
+	-h|--h) 
+	        usage
+                exit;
+                ;;
+	*)
+	        break
+		;;
+    esac
+    shift
+done
+
+if [ ! $# -gt 0 ]; then
+    usage
+    exit
+fi
+
+# assign the default set of arguments
+#   source tree, branch point and destination
+src=$1
+initial_branch_point=$2
+dest=$3
+
+if [ -z "$meta_dir" ]; then
+	meta_dir=meta
+fi
+if [ -z "$meta_branch" ]; then
+	meta_branch=meta
+fi
+content_branch=master
+
+# now fixup based on zero'd values
+if [ -z "$initial_branch_point" ]; then
+    # no source, no branch, just a dest. We'll be
+    # reanimating this repo
+    dest=$src
+    src=
+else
+    if [ -z "$dest" ]; then
+	# no branch was passed, this is just <src> <dest>
+	dest=$initial_branch_point
+	initial_branch_point=
+    fi
+fi
+
+if [ -n "$dest" ] && [ -z "$src" ]; then
+    if [ ! -d "$dest" ]; then
+	echo "ERROR. If no src is passed, $dest must exist"
+	exit 1
+    fi
+fi  
+
+if [ -z "$src" ] && [ ! -d "$src" ]; then
+    echo "ERROR. $src is not a valid src repository"
+    exit 1
+fi
+
+if [ -z "$message" ]; then
+    message="base: add .gitignore and exclusions"
+fi
+
+# figure out what type of type destination repository we are creating
+new_repo=
+existing_repo_no_metadata=
+existing_repo=
+if [ -d "$dest/.git" ]; then
+    x=`cd $dest; git show-ref $meta_branch`
+    if [ -n "$x" ]; then
+	existing_repo=t
+    else
+	existing_repo_no_metadata=t
+    fi
+else
+    # this means we are starting a repository from scratch
+    new_repo=t
+fi
+
+if [ -n "$new_repo" ]; then
+    if [ -z "$src" ]; then
+	if [ -n "$verbose" ]; then
+	    echo "[INFO] Initializing git repository";
+	fi
+	mkdir -p $dest
+	(cd $dest; git init -q)
+    else
+	if [ -n "$verbose" ]; then
+	    echo "[INFO] git clone --shared $src $dest"
+	else
+	    clone_opt=-q
+	fi
+
+	# optimize for local src
+	if [ -d "$src" ]; then
+	    mkdir -p $dest
+
+	    # check to see if a reference was passed, and we don't need
+	    # shared in this case
+	    if [ -n "$reference" ]; then
+		if [ -d "$reference" ]; then
+		    clone_opt="$clone_opt --reference $reference"
+		fi
+	    else
+		clone_opt="$clone_opt --shared"
+	    fi
+
+	    # this means that we don't have to worry about converting
+	    # remote branches into local tracking ones
+	    git clone --bare $clone_opt $src $dest/.git
+	    r=$?
+	    if [ $r -ne 0 ]; then
+		echo [ERROR] git clone of \"$src\" failed
+		exit $r
+	    fi
+
+	    # check to see if the src is a bare repository and if
+	    # it is, do an optimized startup
+	    if [ -d $src/.git ]; then
+		cp -a $src/.git/config $dest/.git
+		cd $dest
+	    else
+		cd $dest
+		git config core.bare false
+		# layering on 1k+ of patches makes auto gc inevitable/annoying
+		git config gc.auto 0
+		git checkout -q -f $checkout_opts master
+		if [ $? != 0 ]; then
+			echo "[ERROR] git checkout -q -f master failed"
+			exit -1
+		fi
+	    fi
+
+	    if [ -n "$clean" ]; then
+		clean_tgt_repo
+	    fi
+
+	    if [ -n "$init_creates_content" ]; then
+	        # check to see if there is already a content branch
+		git show-ref --quiet --verify -- "refs/heads/$content_branch";
+		if [ $? -eq 1 ]; then
+	     	    if [ -n "$verbose" ]; then
+	     		echo "[INFO] creating branch $content_branch from $initial_branch_point";
+	     	    else
+	     		checkout_opts=-q
+	     	    fi
+	     	    git checkout -f $checkout_opts -b $content_branch $initial_branch_point
+	     	    r=$?
+	     	    if [ $r -ne 0 ]; then
+	     		echo [ERROR] git checkout of \"$initial_branch_point\" failed
+	     		exit $r
+	     	    fi
+		else
+	     	    # change the type of repo ...
+	     	    git checkout -f $content_branch
+		    if [ $? != 0 ]; then
+			echo "[ERROR] git checkout -f content failed"
+			exit -1
+		    fi
+	     	    existing_repo=t
+	     	    new_repo=
+	     	    existing_repo_no_metadata=
+		fi
+	    else
+		git checkout -q -f $checkout_opts master
+		if [ $? != 0 ]; then
+			echo "[ERROR] git checkout -qf master failed"
+			exit -1
+		fi
+		git reset --hard $initial_branch_point &> /dev/null
+		if [ $? -ne 0 ]; then
+		    echo "[ERROR] branch point $initial_branch_point is not valid"
+		    exit 1
+		fi
+	    fi
+	else
+	    echo "[ERROR] Could not find source repository $src. remote"
+	    echo "        source repositories are not supported"
+	    exit 1
+	fi
+    fi
+fi
+
+if [ -n "$new_repo" ]; then
+    if [ ! -d "$meta_dir/cfg/scratch/obj" ]; then
+	mkdir -p $meta_dir/cfg/scratch/obj
+    fi
+    if [ ! -d "$meta_dir/patches" ]; then
+	mkdir -p $meta_dir/patches
+    fi
+
+    install_resources
+
+
+    # we don't want to commit any links to patches, so just exclude the
+    # entire directory
+
+    echo "top_tgt" > $meta_dir/.gitignore
+    echo "*.pre" >>  $meta_dir/.gitignore
+    echo "*.sanitized" >>  $meta_dir/.gitignore
+    echo "cfg/*" >>  $meta_dir/.gitignore
+    echo "!cfg/kernel-cache/" >>  $meta_dir/.gitignore
+
+    echo ""
+    echo "*.patch" > $meta_dir/patches/.gitignore
+    echo "*.diff" >> $meta_dir/patches/.gitignore
+    if [ -e .gitignore ]; then
+	cat .gitignore | sed s%^patches%#patches% | \
+            sed s%^series%#series% > .gitignore.tmp
+	mv .gitignore.tmp .gitignore
+
+	if [ -n "$init_creates_content" ]; then
+	    git add .gitignore 
+            git commit -m "gitignore: adding base exclusions"
+	    if [ $? != 0 ]; then
+		echo "[ERROR] git commit gitignore failed"
+		exit -1
+	    fi
+	fi
+    else
+	touch .gitignore
+    fi
+
+    if [ -n "$init_creates_content" ]; then
+	echo "Initial creation marker" > .create_stamp
+	git add -f .create_stamp
+	git add -f .gitignore
+	git commit -q -m "$message"
+	if [ $? != 0 ]; then
+		echo "[ERROR] git commit create_stamp failed"
+		exit -1
+	fi
+    fi
+
+    git checkout -q $content_branch
+    if [ $? != 0 ]; then
+	echo "[ERROR] git checkout -q content_branch failed"
+	exit -1
+    fi
+fi
+
+if [ -n "$existing_repo" ]; then
+    # this is an old repository, check if we should be restoring a checkpoint
+    kgit-checkpoint -b $meta_branch -r
+    if [ $? != 0 ]; then
+	echo "[ERROR] kgit checkpoint restore failed"
+	exit -1
+    fi
+fi

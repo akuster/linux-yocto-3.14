@@ -1,0 +1,89 @@
+#!/bin/bash
+
+#  (kgit-clean), (maintenance utilities for a git tree and associated meta data)
+
+#  Copyright (c) 2008-2013 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+# For consistent behaviour with "grep -w"
+LC_ALL=C
+export LC_ALL
+meta_dir=meta
+
+usage()
+{
+cat <<EOF
+
+ kgit-clean [-b] [-h]
+
+   Perform cleanup operations on a prepared repoistory
+
+   -b: remove -old branches. unused branches will also be
+       removed if an upstream repository is passed
+   -u: upstream repository
+
+   -h: help
+   -v: verbose
+
+EOF
+}
+
+
+if [ ! $# -gt 0 ]; then
+    usage
+    exit
+fi
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+                -h|--h|--help)
+                        usage
+                        exit
+                        ;;
+                -v|--v)
+                        verbose=t
+                        ;;
+                -b|--b)
+                        branches=t
+                        ;;
+                -c|--c)
+                        consistency_check=t
+                        ;;
+		*)
+			break
+			;;
+	esac
+	shift
+done
+
+path=`dirname $0`
+. $path/kgit
+
+if [ -n "$branches" ]; then
+    if [ -n "$verbose" ]; then
+	echo "  * cleaning -old branches"
+    fi
+    for branch in `ls .git/refs/heads`; do
+	case "$branch" in 
+            *-old) 
+		if [ -n "$verbose" ]; then 
+		    echo "     * git branch -D $branch"
+		fi
+		git branch -D $branch
+		;;
+	esac
+    done
+fi
+

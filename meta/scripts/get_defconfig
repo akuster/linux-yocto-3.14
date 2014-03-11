@@ -1,0 +1,43 @@
+#!/bin/bash
+
+#  (get_defconfig), (simple script to pull a defconfig for a particular arch)
+
+#  Copyright (c) 2010 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  You should have received a copy of the GNU General Public License
+#  along with this program; if not, write to the Free Software
+#  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+
+
+arch=$1
+defconfig=$2
+
+# this simply yanks the defconfig out of the arch makefile, looks for one
+# that doesn't use any nested variables and converts it to a shell assignment
+# in order to evaluate and echo it to the user
+if [ -z "$defconfig" ]; then
+    def_config=`grep KBUILD_DEFCONFIG arch/$arch/Makefile | grep -v \\\\$ | sed 's/://' | sed 's/ //g'`
+    eval $def_config
+    readlink -f `find . -name $KBUILD_DEFCONFIG | head -n1`
+else
+    if [ ! -f $defconfig ]; then
+	d=`find . -name $defconfig | head -n1`
+	if [ -z "$d" ]; then
+	    echo "ERROR"
+	else
+	    readlink -f $d
+	fi
+    else
+	readlink -f $defconfig
+    fi
+fi
+

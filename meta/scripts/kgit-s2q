@@ -1,0 +1,626 @@
+#!/bin/bash
+#
+# kgit-s2q
+#
+# Manage a queue of patches described by a series
+#
+# Based on:
+#    - LTSI helper script to generate a git tree from the quilt LTSI tree
+#    - git quilt-import
+#    - guilt (helper routines)
+#
+# Copyright 2013 Bruce Ashfield
+#
+# Licensed under the GPLv2 only.
+#
+#
+
+usage()
+{
+cat <<EOF
+
+ kgit-s2q [--author <author name> ] [-n] [--patches <dir>] [-a] [-i]
+          [--current] [--series] [--annotated] [--gen] [-c <count>] [-v] [-h] -- [<patch>]"
+
+    --series:    dump the series file and exit
+    --gen:       generate patch headers if missing
+    --author:    patch author to use if missing, in the format of: "First Last <foo@bar.com>"
+    --patches:   directory containing the series file to use
+    --current:   show top currently applied patch
+    --annotated: the series is annotated, use the annotations for auto resume
+    -c:          number of commits to test when autoresuming
+    -a:          autoresume series after last sucessfully applied patch
+    -i:          interactively prompt if commit information is missing
+    -v:          verbose
+    -n:          dry run
+    -h:          help
+
+    --:          marks the end of options on the command line
+
+    <patch>:     patch to use as the starting point (turns autoresume off)
+
+EOF
+}
+
+silent()
+{
+	"$@" >/dev/null 2>/dev/null
+}
+
+get_branch()
+{
+	silent git symbolic-ref HEAD || \
+		die "Working on a detached HEAD is unsupported."
+
+	git symbolic-ref HEAD | sed -e 's,^refs/heads/,,'
+}
+
+next_patch()
+{
+	COMMIT_START="$1"
+
+	# find the first "real" commit on the branch, i.e. not a merge commit, and not
+	# not a commit that came from a merge
+	TOP_COMMIT=`git rev-list -n 1 --no-merges --first-parent $COMMIT_START`
+	PARENT=`git show $TOP_COMMIT|grep ommit|grep 'pstream\|herry\|tip'|sed 's/.* \([0-9a-f]\+\).*/\1/'`
+
+	CLEN=`echo $PARENT|wc -c`
+	if [ $CLEN -eq 41 ] && [ -n "$ANNOTATED_SERIES" ]; then
+		# searching via PARENT ID, which is an annotation found in the patch itself
+		if [ -z "$FENCE_POST" ]; then
+			for i in `tac $DIR/series | grep -v -e ^# -e ^$`; do
+				if [ -z "$FENCE_POST" ]; then
+					FENCE_POST=`grep -l $PARENT $DIR/$i`
+				fi
+			done
+		fi
+	else
+		if [ -n "$VERBOSE" ]; then
+			echo "[INFO] No annotated resume point (parent ID) falling back to patch id detection"
+		fi
+
+		DS1=`mktemp`
+		DS2=`mktemp`
+		DS3=`mktemp`
+		DS4=`mktemp`
+		# get the git patch-id of the top commit
+		git show $TOP_COMMIT | git patch-id | cut -f1 -d' ' > $DS1
+
+		# and subject
+		git format-patch --stdout $TOP_COMMIT~..$TOP_COMMIT  | \
+			git mailinfo -b /dev/null /dev/null | grep Subject: | sed 's/Subject: *//' > $DS4
+
+		# find the patch in the series that matches it
+		for i in `tac $DIR/series | grep -v -e ^# -e ^$`; do
+			git patch-id < $DIR/$i | cut -f1 -d' ' > $DS2
+			cmp -s $DS1 $DS2
+			if [ $? = 0 ]; then
+				FENCE_POST=$i
+				break
+			fi
+		done
+
+		# return if we found a match
+		if [ -n "$FENCE_POST" ]; then
+			if [ -n "$VERBOSE" ]; then
+				echo "[INFO] Matched autoresume via patch ID detection"
+			fi
+			rm -f $DS1 $DS2 $DS3 $DS4
+			return
+		fi
+
+		if [ -n "$VERBOSE" ]; then
+			echo "[INFO] Could not autodetect resume point via patch ID falling back to diffstat detection"
+		fi
+
+		for i in `tac $DIR/series | grep -v -e ^# -e ^$`; do
+			cat $DIR/$i | git mailinfo -b /dev/null /dev/null | grep Subject: | sed 's/Subject: *//' > $DS3
+			cmp -s $DS3 $DS4
+			if [ $? -eq 0 ]; then
+				if [ -n "$VERBOSE" ]; then
+					echo "[INFO] Found subject match in $i."
+				fi
+				MAYBE_START=$i
+				break
+			fi
+		done
+
+		# diffstats
+		git show $TOP_COMMIT | diffstat -p0 > $DS1
+		for i in `tac $DIR/series | grep -v -e ^# -e ^$`; do
+			cat $DIR/$i | diffstat -p0 > $DS2
+			cmp -s $DS1 $DS2
+			if [ $? = 0 ]; then
+				# as a second level check, ensure that if diffstats match, subjects
+				# should match as well. saves a lot of false positives.
+				if [ $i = "$MAYBE_START" ]; then
+					FENCE_POST=$i
+					if [ -n "$VERBOSE" ]; then
+						echo "[INFO] Matched autoresume via diffstat and subject detection" 
+					fi
+					rm -f $DS1 $DS2 $DS3 $DS4
+					return
+				fi
+			elif [ $i = "$MAYBE_START" ]; then
+					FENCE_POST=$i
+					if [ -n "$VERBOSE" ]; then
+						echo "[WARNING] Subject matched, but diffstat did not. Continuing anyway."
+					fi
+					rm -f $DS1 $DS2 $DS3 $DS4
+					return
+			fi
+		done
+
+		# if we are here, it means that we couldn't match the top commit to a patch
+		# in the series. The search can continue deeper into history, or we can flip
+		# the search. Let's take the last entry in the series, and see if its patch-id
+		# is on the branch.
+
+		# get the base commit of the branch
+		merge_base=`git merge-base HEAD master`
+		# dump all of the real commits on the branch from the head commit to the merge base
+		# get their patch IDs
+		git rev-list --no-merges --first-parent $merge_base..HEAD | xargs git show | git patch-id  | cut -f1 -d' ' > $DS2
+
+		# Dump all of the subjects as well
+		echo "" > $DS4
+		for j in `git rev-list --no-merges --first-parent $merge_base..HEAD`; do
+			git format-patch --stdout $j~..$j  | \
+				git mailinfo -b /dev/null /dev/null | grep Subject: | sed 's/Subject: *//' >> $DS4
+		done
+
+		for i in `tac $DIR/series | grep -v -e ^# -e ^$`; do
+			# grab the patch ID
+			cat $DIR/$i | git patch-id | cut -f1 -d' ' > $DS1
+		    
+			# if our patch ID is in that list, then the series is completely in
+			# the branch and is out of sync. Considering warning.
+			grep -qF -f $DS1 $DS2
+			if [ $? -eq 0 ]; then
+				FENCE_POST=$i
+				if [ -n "$VERBOSE" ]; then
+					echo "[NOTE] series and branch are out of sync"
+					echo "[INFO] found the top of series via patch-id in the branch, autoresuming"
+					break
+				fi
+			else
+				# we failed to match by patch-id. In case a patch was fuzzed into the tree, double check via
+				# subject.
+				cat $DIR/$i | git mailinfo -b /dev/null /dev/null | grep Subject: | sed 's/Subject: *//' > $DS3
+
+				grep -qF -f $DS3 $DS4
+				if [ $? -eq 0 ]; then
+					FENCE_POST=$i
+					if [ -n "$VERBOSE" ]; then
+						echo "[NOTE] series and branch are out of sync"
+						echo "[INFO] found the top of series via subject match in the branch, autoresuming"
+					fi
+					break
+				fi
+			fi
+		done
+
+		if [ -z "$FENCE_POST" ]; then
+			if [ -n "$VERBOSE" ]; then
+				echo "[INFO] Could not autodetect resume point via diffstat"
+			fi
+		else
+			if [ -n "$VERBOSE" ]; then
+				echo "[INFO] Matched autoresume via diffstat detection"
+			fi
+		fi
+
+		rm -f $DS1 $DS2 $DS3 $DS4
+
+		return
+	fi
+}
+
+create_resolution_script()
+{
+cat <<EOF
+#!/bin/bash
+
+  echo "running: git apply --reject .git/rebase-apply/patch"
+  git apply --reject .git/rebase-apply/patch > /dev/null
+  echo ""
+  echo "[INFO] resolving rejects"
+  for f in \`git ls-files -o | grep rej | sed 's/\.rej//'\`; do
+      echo "[INFO] resolving: \$f"
+
+      rm -f \$f.porig
+
+      echo "   running: wiggle --replace \$f \$f.rej"
+      wiggle --replace \$f \$f.rej > /dev/null
+      
+      echo "[INFO] checking resolution" 
+      echo -------------------- original reject -----------------------------
+      cat \$f\.rej
+      echo --------------------- wiggled in -----------------------------
+      diff -up \$f.porig \$f
+      echo ------------------------------------------------------------------
+
+      RJSTAT=\`diffstat \$f\.rej |grep changed\`
+      echo "Reject  had: "\$RJSTAT
+
+      RFSTAT=\`diff -up \$f.porig \$f | diffstat |grep changed\`
+      echo "Refresh has: "\$RFSTAT
+
+      if [ "\$RJSTAT" = "\$RFSTAT" ]; then
+          echo -n "Remove porig and reject now? [Y/n/exit] "
+          read RESP
+          if [ x\$RESP = x -o x\$RESP = xy ] ; then
+                rm \$f\.porig \$f\.rej
+          elif [ x\$RESP = xexit ] ; then
+                 exit 1
+          fi
+      fi
+  done
+
+  git ls-files -m -o -x "meta*" -x "*.rej" -x "*.porig" | xargs git add
+  git am --resolved
+
+  echo "[INFO] refresh patch via:"
+  echo "  git format-patch -o <original series dir> HEAD^"
+EOF
+}
+
+quilt_author=""
+while test $# != 0
+do
+	case "$1" in
+	--author)
+		shift
+		quilt_author="$1"
+		;;
+	--patches)
+		shift
+		QUILT_PATCHES="$1"
+		;;
+	-c)     shift
+		DETECT_COUNT="$1"
+		;;
+	-a)
+		AUTORESUME=1
+		;;
+	-i)
+		INTERACTIVE=1
+		;;
+	-v)
+		VERBOSE=1
+		;;
+	--gen)
+		;;
+	--series)
+		DUMP_SERIES=1
+		;;
+	--current)
+		DUMP_NEXT_PATCH=1
+		;;
+	--annotated)
+		ANNOTATED_SERIES=1
+		;;
+	--help|-h)
+		usage
+		exit
+		;;
+	--)
+		shift
+		break
+		;;
+	esac
+
+	shift
+done
+
+# we change directories ourselves
+SUBDIRECTORY_OK=1
+. "$(git --exec-path)/git-sh-setup"
+
+# if anything is left on the command line, it is a specified starting patch and
+# not a fence post
+if [ -n "$1" ]; then
+	START=$1
+	AUTORESUME=
+fi
+
+META=$KMETA
+if [ -z "$META" ]; then
+	ls -d meta* 2> /dev/null
+	if [ $? -eq 0 ]; then
+		META=`ls -d meta* | head -1`
+	fi
+	ls -d .meta* 2> /dev/null
+	if [ $? -eq 0 ]; then
+		META=`ls -d .meta* | head -1`
+	fi
+	if [ -z "$META" ]; then
+		META=.meta
+	fi
+fi
+BRANCH=`get_branch`
+
+# Quilt Author
+if [ -n "$quilt_author" ] ; then
+	quilt_author_name=$(expr "z$quilt_author" : 'z\(.*[^ ]\) *<.*') &&
+	quilt_author_email=$(expr "z$quilt_author" : '.*<\([^>]*\)') &&
+	test '' != "$quilt_author_name" &&
+	test '' != "$quilt_author_email" ||
+	die "malformed --author parameter"
+fi
+
+if [ -n "$QUILT_PATCHES" ]; then
+	DIR="$QUILT_PATCHES"
+else
+	DIR="$META/patches/$BRANCH"
+fi
+
+if [ ! -d "$DIR" ]; then
+	echo ""
+	echo "[ERROR] Can't find patch dir at $DIR"
+	usage
+fi
+
+mkdir -p $META/cfg/scratch || exit 1
+REFRESH=$META/cfg/scratch/refresh
+
+SERIES=$DIR/series
+if [ ! -f "$SERIES" ]; then
+	echo ""
+	echo "[ERROR] Can't find series file at $SERIES"
+	usage
+	exit 1
+fi
+
+if [ -n "$DUMP_SERIES" ]; then
+	for i in `cat $SERIES`; do
+		echo $DIR/$i
+	done
+	exit 0
+fi
+
+if [ -n "$DUMP_NEXT_PATCH" ]; then
+	next_patch HEAD
+
+	if [ -z "$FENCE_POST" ] && [ -n "$DETECT_COUNT" ]; then
+		count=0
+		commit_string="HEAD"
+		while [ -z $FENCE_POST ] && [ $count -lt $DETECT_COUNT ]; do
+			commit_string=`echo -n $commit_string^`
+			count=`expr $count + 1`
+
+			next_patch "$commit_string"
+		done
+	fi
+
+	if [ -z "$FENCE_POST" ]; then
+		cat $SERIES | head -n 1 | sed "s%^%$DIR/%"
+	else
+		echo "$FENCE_POST"
+	fi
+
+	exit 0
+fi
+
+diffstat --help > /dev/null 2>&1
+if [ $? != 0 ]; then
+	echo It appears you dont have diffstat installed.
+	echo Please install it.
+	exit 1
+fi
+
+if [ -n "$AUTORESUME" ] && [ -z "$FENCE_POST" ]; then
+
+	next_patch HEAD
+
+	if [ -z "$FENCE_POST" ] && [ -n "$DETECT_COUNT" ]; then
+		count=0
+		commit_string="HEAD"
+		while [ -z $FENCE_POST ] && [ $count -lt $DETECT_COUNT ]; do
+			commit_string=`echo -n $commit_string^`
+			count=`expr $count + 1`
+
+			if [ -n "$VERBOSE" ]; then
+				echo "[INFO] detection failed, trying previous commit ($commit_string)"
+			fi
+
+			next_patch "$commit_string"
+		done
+	fi
+		
+
+	if [ -z "$FENCE_POST" ]; then
+		echo "[INFO] Could not autodetect resume point via annotation, patch ID, diffstat or matching filename."
+		echo "       Patch that created current HEAD commit $PARENT is unknown. Starting from the first patch."
+	else
+		echo "[INFO] Resuming from patch after \"$FENCE_POST\""
+	fi
+fi
+
+# Temporary directories
+tmp_dir="$GIT_DIR"/rebase-apply
+tmp_msg="$tmp_dir/msg"
+tmp_patch="$tmp_dir/patch"
+tmp_info="$tmp_dir/info"
+
+COUNT=`cat $SERIES | grep '^[a-zA-Z0-9_]'|wc -l`
+APPLIED=0
+
+# Find the intial commit
+commit=$(git rev-parse HEAD)
+
+for i in `cat $SERIES | grep '^[a-zA-Z0-9_]'`
+do
+	APPLIED=$[$APPLIED+1]
+
+	if [ -n "$START" ]; then
+		echo $START | grep -qF $i
+		if [ $? -ne 0 ]; then
+			# if we don't match, skip to the next patch
+			continue
+		else
+			# if we do match, clear our variables so all future patches
+			# will be pushed.
+			START=""
+			FENCE_POST=""
+		fi
+	else
+		if [ -n "$FENCE_POST" ]; then
+			# we compare in the series:
+			#     links/kernel-cache/ltsi/patches.dma-mapping/...
+			# to $FENCE_POST which will have:
+			#     meta/patches/standard/base/links/kernel-cache/ltsi/patches.dma-mapping/...
+			# so grep for the series sub-path in $FENCE_POST
+			echo $FENCE_POST | grep -qF $i
+			if [ $? != 0 ]; then
+				continue
+			else
+				FENCE_POST=""
+				continue
+			fi
+		fi
+	fi
+
+	if [ ! -f "$DIR/$i" ];then
+		echo "[ERROR]: patch $DIR/$i doesnt exist"
+		exit 1
+	fi
+
+	if [ -n "$VERBOSE" ]; then
+		echo "($APPLIED/$COUNT) `basename $i`"
+	fi
+
+	git am --keep-non-patch $DIR/$i > /dev/null 2>&1
+	if [ $? != 0 ];then
+		git am --abort > /dev/null 2>&1
+		echo "[INFO]: check of $DIR/$i with \"git am\" did not pass, trying reduced context."
+		git am -C1 --keep-non-patch $DIR/$i > /dev/null 2>&1
+		if [ $? = 0 ]; then
+			commit=$(git rev-parse HEAD)
+			echo $DIR/$i $commit >> $REFRESH
+			continue
+		fi
+		git am --abort > /dev/null 2>&1
+		echo "[INFO]: Context reduced git-am of $DIR/$i with \"git am\" did not work, trying \"apply\"."
+	else
+		commit=$(git rev-parse HEAD)
+		continue
+	fi
+
+	# git am failed; take manual processing path.
+	if [ ! -d "$tmp_dir" ]; then
+		mkdir $tmp_dir || exit 2
+	fi
+
+	git mailinfo -b "$tmp_msg" "$tmp_patch" \
+	    <"$DIR/$i" >"$tmp_info" || exit 3
+	test -s "$tmp_patch" || {
+		echo "Patch is empty.  Was it split wrong?"
+		exit 1
+	}
+
+	#  Parse the author information
+	GIT_AUTHOR_NAME=$(sed -ne 's/Author: //p' "$tmp_info")
+	GIT_AUTHOR_EMAIL=$(sed -ne 's/Email: //p' "$tmp_info")
+	export GIT_AUTHOR_NAME GIT_AUTHOR_EMAIL
+	while test -z "$GIT_AUTHOR_EMAIL" && test -z "$GIT_AUTHOR_NAME" ; do
+		if [ -n "$quilt_author" ] ; then
+			GIT_AUTHOR_NAME="$quilt_author_name";
+			GIT_AUTHOR_EMAIL="$quilt_author_email";
+		else
+			if [ -z "$INTERACTIVE" ]; then
+				GIT_AUTHOR_NAME="invalid_git config"
+				GIT_AUTHOR_EMAIL="<unknown@unknown>"
+			else
+				echo "No author found in $patch_name" >&2;
+				echo "---"
+				cat $tmp_msg
+				printf "Author: ";
+				read patch_author
+
+				echo "$patch_author"
+
+				patch_author_name=$(expr "z$patch_author" : 'z\(.*[^ ]\) *<.*') &&
+				patch_author_email=$(expr "z$patch_author" : '.*<\([^>]*\)') &&
+				test '' != "$patch_author_name" &&
+				test '' != "$patch_author_email" &&
+				GIT_AUTHOR_NAME="$patch_author_name" &&
+				GIT_AUTHOR_EMAIL="$patch_author_email"
+			fi
+		fi
+	done
+	GIT_AUTHOR_DATE=$(sed -ne 's/Date: //p' "$tmp_info")
+	SUBJECT=$(sed -ne 's/Subject: //p' "$tmp_info")
+	export GIT_AUTHOR_DATE SUBJECT
+	if [ -z "$SUBJECT" ] ; then
+		SUBJECT=$(echo $patch_name | sed -e 's/.patch$//')
+	fi
+
+	# update-ref is what "git am" does.
+	git update-ref ORIG_HEAD HEAD
+	git apply --index -C1 "$tmp_patch"
+	if [ $? != 0 ]; then
+
+	        # put all the pieces that git am requires to complete
+	        # the resolution of the reject. Why not just use git am ?
+	        # The reason we are in here is because the patch was likely
+	        # missing some requirement elements for git am to apply it.
+	        # so rather that re-writing the patch (Which could be in a
+	        # read only location), we generate what we need and put 
+	        # the parts in place, so it can be resolved and not happen
+	        # again.
+		echo 1 > $tmp_dir/last
+		echo 1 > $tmp_dir/next
+		echo t > $tmp_dir/utf8
+
+		# also copied from git-am.sh
+		git rev-parse --verify -q HEAD > $tmp_dir/abort-safety
+
+		touch $tmp_dir/keep
+		touch $tmp_dir/scissors
+		touch $tmp_dir/no_inbody_headers
+		touch $tmp_dir/quiet
+		touch $tmp_dir/threeway
+		touch $tmp_dir/applying
+		touch $tmp_dir/apply-opt
+		touch $tmp_dir/sign
+
+		cp $DIR/$i $tmp_dir/0001
+
+		echo "$SUBJECT"  > $tmp_dir/final-commit
+		echo >> $tmp_dir/final-commit
+		cat "$tmp_msg" >> $tmp_dir/final-commit
+
+		create_resolution_script > $tmp_dir/resolve_rejects
+		chmod +x $tmp_dir/resolve_rejects
+
+		echo "[ERROR]: Application of $DIR/$i failed."
+		echo "         Patch needs to be refreshed. Sample resolution script:"
+		echo "             .git/rebase-apply/resolve_rejects"
+		exit 1
+	else
+		# git apply worked, take next steps.
+		tree=$(git write-tree) &&
+		commit=$( (echo "$SUBJECT"; echo; cat "$tmp_msg") | git commit-tree $tree -p $commit) &&
+		git update-ref -m "kgit-s2q: $patch_name" HEAD $commit || exit 4
+
+		# also set the ORIG_HEAD, since it is used before applying patches
+	        git update-ref ORIG_HEAD HEAD
+
+		echo $DIR/$i $commit >> $REFRESH
+
+		GIT_AUTHOR_NAME=""
+		GIT_AUTHOR_EMAIL=""
+		GIT_AUTHOR_DATE=""
+		SUBJECT=""
+	fi
+done
+
+# if we've failed to locate $FENCE_POST in the series, and
+# not subsequently cleared $FENCE_POST, then something evil
+# has happened, and we'll do nothing and silently
+# return zero which otherwise would be nasty.
+if [ -n "$FENCE_POST" ]; then
+	echo Failed to locate $FENCE_POST in the series
+	exit 1
+fi

@@ -1,0 +1,273 @@
+#!/bin/bash
+
+# "configme" script.
+
+#  Copyright (c) 2009-2010 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+# Wrapper script to use existing tools to translate kernel
+# config fragments into the pre-processed assembly of frags,
+# and then finally a .config, and optionally an audit of that
+# final .config
+
+# Assumes you have a kernel clone, non-bare, with all BSPs/branches
+# as local refs (i.e. not origin/*), i.e.
+# 	git clone --bare git://myserver/my_kernel linux-2.6
+# 	cd linux-2.6
+#	mkdir .git ; mv * .git
+#	git config core.bare false
+#	git checkout -f meta
+# Also assumes that current dir is in this linux git repo.
+
+# Return values: zero if a ".config" was created, one otherwise.
+
+CURRENT=`git branch |grep \*|sed 's/^\* //'`
+SCRIPT_DIR=`dirname $0`
+
+PATH=$PATH:$SCRIPT_DIR
+QUICK=1
+
+usage()
+{
+cat << EOF
+
+    configme [--audit] [--alldefconfig] [--allnoconfig] [--reconfig] [--o <outdir>] [target] [machine]
+
+    Processes <metadir>/meta-series looking for configuration fragments to collect and process.
+
+        audit: do an audit of final .config file
+        reconfig: reconfigure an existing build
+        target: name of the configuration target (branch)
+        machine: specified if multiple machines use target
+        outdir: name of the output directory
+EOF
+exit 1
+}
+
+# This is factored out into a function because for a given branch,
+# there may be more than one user (i.e. big endian, little endian,
+# or BSPs that use the same branch but differ only in kernel configs)
+run_board_config()
+{
+    # Can't set these until we've unwound the checkpoint and have meta data.
+    KVER=`cat ./$META_DIR/cfg/kernel-*cache/kver|sed 's/^v//'`
+
+    META=./$META_DIR/meta-series
+
+    if [ ! -f $META ]; then
+	echo Something evil happened, cant find meta=\"$META\"
+	exit 1
+    fi
+
+    # Look for standard defines, with compatibility fallbacks
+    # In theory, there should never be multiple KARCH lines...
+    KARCH=`grep '^# _define KARCH'    $META | head -n1 | awk '{print $4}'|sed 's/^.\(.*\).$/\1/'`
+    KTYPE=`grep '^# _define KTYPE'    $META | head -n1 | awk '{print $4}'|sed 's/^.\(.*\).$/\1/'`
+    KMACH=`grep '^# _define KMACHINE' $META | head -n1 | awk '{print $4}'|sed 's/^.\(.*\).$/\1/'`
+
+    BUILD_DIR=$out_dir
+
+    if [ -z "$machine" ]; then
+	echo Error: machine is undefined
+	return 1
+    fi
+
+    CFGFILE=$machine-$target-config-$KVER
+
+    if [ "x$KARCH" == "x" ] ; then
+	echo Error: Couldnt determine architecture from file:
+	echo -e \\t$META
+	return 1
+    fi
+
+    # Fixups to match KARCH onto kernel.org arch
+    if [ $KARCH == "powerpc_64" ]; then
+	KARCH=powerpc
+    fi
+    if [ $KARCH == "mips64" ]; then
+	KARCH=mips
+    fi
+
+    if [ -z "$BUILD_DIR" ]; then
+	echo No build dir specified.  Use \"-o\" to specify one.
+	return 1
+    fi
+
+    if [ -z "$reconfig" ] && [ -d $BUILD_DIR ]; then
+	echo Dir $BUILD_DIR already exists, remove/move
+	echo it if you want to re-run this configuration utility.
+	return 1
+    fi
+
+    if [ ! -d $BUILD_DIR ]; then
+	mkdir $BUILD_DIR
+	if [ $? != 0 ]; then
+	    echo Failed to mkdir $BUILD_DIR for final .config file
+	    return 1
+	fi
+    fi
+
+    if [ ! -f $META ]; then
+	echo Failed to find meta series $META
+	return 1
+    fi
+
+    kgit-meta -v -k $META
+    if [ $? != 0 ]; then
+	echo Error running the meta series for collecting config data
+	return 1
+    fi
+
+    KTGT=$KTYPE/$KMACH
+    mkdir -p ./$META_DIR/cfg/$KTGT
+    if [ $? != 0 ]; then
+	echo Failed to mkdir ./$META_DIR/cfg/$KTGT for config data
+	return 1
+    fi
+
+    frags=`cat $META_DIR/cfg/$KTGT/config_frag.txt | sed 's%\(^.*$\)%'$META_DIR/cfg'\1%'`
+    pre_config -l $META_DIR/cfg/$KTGT/ $frags > $META_DIR/cfg/$KTGT/config.log 2>&1
+    if [ $? -ne 0 ]; then
+	echo "ERROR: could not sanitize configuration fragments"
+	echo "   errors are logged in `pwd`/$META_DIR/cfg/$KTGT/config.log"
+	exit 1
+    fi
+
+    # remove any old assembled debug fragments
+    rm -f $BUILD_DIR/.tmp.config*
+
+    merge_frags=`cat $META_DIR/cfg/$KTGT/config_frag.txt | sed 's%\(^.*$\)%'$META_DIR/cfg'\1.sanitized%'`
+    ARCH=$KARCH O=$BUILD_DIR merge_config.sh $allnoconfig -d $merge_frags  \
+                                      > $META_DIR/cfg/$KTGT/merge_log.txt 2>&1
+
+    mv $BUILD_DIR/.tmp.config* $META_DIR/cfg/$KTGT/$CFGFILE
+    if [ $? != 0 ]; then
+     	echo creation of pre-processed config data failed
+     	return 1
+    fi
+
+    # break the merge log down into parts that can be processed later
+    grep -A2 "^Value of" $META_DIR/cfg/$KTGT/merge_log.txt > $META_DIR/cfg/$KTGT/redefinition.txt
+    grep -A2 "^Value requested" $META_DIR/cfg/$KTGT/merge_log.txt > $META_DIR/cfg/$KTGT/mismatch.txt
+
+    echo "[INFO] Pre-processed cfg file $CFGFILE created."
+
+    # this is the 'old' way, kept as a double check
+    if [ -n "$VERIFY_CONFIG" ]; then
+    	make ARCH=$KARCH O=$BUILD_DIR \
+     	    KBUILD_DEFCONFIG=../../../$META_DIR/cfg/$KTGT/$CFGFILE \
+     	    defconfig > $META_DIR/cfg/$KTGT/config.log 2>&1
+
+	if [ $? != 0 ]; then
+   	    echo Kernel LKC processing of raw config data failed \($KARCH\)
+     	    echo See $META_DIR/cfg/$KTGT/config.log for details.
+     	    return 1
+	fi
+    fi
+    echo "[INFO] processing of raw cfg data completed."
+    if [ $QUICK -ne 1 ]; then
+	kconf_check $CFGFILE $META `pwd` $BUILD_DIR
+    fi
+
+cat << EOF
+
+********************************************************************************
+  Configuration stored in $BUILD_DIR/.config
+********************************************************************************
+
+  To build with this kernel configuration, ensure a suitable toolchain
+  is in your path for $KARCH, note its common command prefix, and do:
+
+   make O=$BUILD_DIR ARCH=$KARCH \\
+        CROSS_COMPILE=<cross-compile-prefix>
+
+EOF
+    return 0
+}
+
+#########################  Start here ##########################
+
+if [ -z "$1" ]; then
+	usage
+	exit
+fi
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	    --help) 
+		usage
+		exit
+		;;
+	    --audit)
+		QUICK=0
+		;;
+	    --reconfig)
+		reconfig=t
+		;;
+	    --allnoconfig)
+		allnoconfig=-n
+		;;
+	    --alldefconfig)
+		allnoconfig=""
+		;;
+	    --output|-o|--o)
+		out_dir=$2
+		shift
+		;;
+	    -v) verbose=t
+		;;
+	    *) break
+		;;
+	esac
+	shift
+done
+
+# an explicit target to configure may have been passed (whatever is left
+# over). If something wasn't passed, we configure based on the current
+# branch.
+target=$1
+machine=$2
+if [ -z "$target" ]; then
+    target=standard
+fi
+
+# find the meta directory
+meta_dir()
+{
+    # first check to see if there's a directory of the same name
+    # as the meta branch. That's the first choice. If it doesn't exist
+    # check the meta branch name a .$meta_branch, and finally fall back
+    # to .meta if everything fails
+    if [ -n "$META_BRANCH" ]; then
+	if [ -d "$META_BRANCH" ]; then
+	    META_DIR="$META_BRANCH"
+	elif [ -d ".$META_BRANCH" ]; then
+	    META_DIR=".$META_BRANCH"
+	fi
+    fi
+    if [ -z "$META_DIR" ]; then
+	META_DIR=`ls -d .meta* | head -1`
+	if [ -z "$META_DIR" ]; then
+	    META_DIR=".meta"
+	fi
+    fi
+}
+
+META_BRANCH=$KMETA
+meta_dir
+
+echo "[INFO] Configuring target/machine combo: \"$target/$machine\""
+run_board_config
+if [ $? != 0 ]; then
+	echo config of \"$target/$machine\" failed
+	exit 1
+fi
+exit 0

@@ -1,0 +1,299 @@
+#!/bin/bash
+
+# "scc" script.
+
+#  Copyright (c) 2010-2013 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+version="0.2"
+
+usage()
+{
+cat << EOF
+
+ scc [--help] [--force] [-i] [-w] [-o outfile] [-D<var>=<value>] [-I<path>] [-v] infiles
+
+      --help:      This message
+      --force:     force overwrite output file if it already exists
+      -D:          define <var> to <value> which will be available to sub scripts
+      -I:          include path <path> will be searched for files
+      -i:          leave intermediate files on failure
+      -w:          only warn on missing files
+      -v:          verbose output
+      -o:          outfile file for processed results. stdout is used if not passed
+
+      infiles      files to preprocess, and output into outfile or stdout
+
+EOF
+}
+
+if [ -z "$1" ]; then
+	usage
+	exit 1
+fi
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	    --help)
+		usage
+		exit
+		;;
+	    -D*|--D*)
+		if [ "$1" == "-D" ] || [ "$1" == "--D" ]; then
+		    x=$2; shift;
+		else
+		    x=`echo $1 | sed s%^-*D%%`
+		fi
+		defines="$defines $x"
+		;;
+	    -I*|--I*)
+		if [ "$1" == "-I" ] || [ "$1" == "--I" ]; then
+		    x=$2; shift;
+		else
+		    x=`echo $1 | sed s%^-*I%%`
+		fi
+		if [ -n "$x" ] && [ -d "$x" ]; then
+		    include_paths="$include_paths -I$x"
+		fi
+		;;
+	    --force|-f)
+		force=t
+		;;
+	    -i)
+		intermediate=t
+		;;
+	    -o)
+		outfile=$2
+		shift
+		;;
+	    -v) verbose=t
+		;;
+	    *) break
+		;;
+	esac
+	shift
+done
+
+err()
+{
+    echo "$@" 1>&2
+}
+
+# args are the input files
+infiles=$@
+shift
+
+if [ -z "$infiles" ]; then
+    err "ERROR: a input file must be supplied"
+    exit 1
+else
+    for f in $infiles; do
+	if [ ! -f "$f" ]; then
+	err "ERROR. input file \"$f\" does not exist"
+	exit 1
+	fi
+    done
+fi
+if [ -n "$outfile" ] && [ -f "$outfile" ]; then
+    if [ -z "$force" ]; then
+	err "ERROR: output file \"$outfile\" exists, and --force was not passed"
+	exit 1
+    fi
+fi
+
+##
+## create variables for use in scripts
+##
+if [ -n "$defines" ]; then
+    vars=$(echo $defines | sed 's/,/ /g')
+    for v in "$vars"; do
+	# eval makes it available for this script
+	eval $v
+	# echo makes it available for other scripts
+	dump_vars=$(echo "$dump_vars"; echo export $v)
+    done
+fi
+
+header()
+{
+    echo "#"
+    echo "# scc v$version"
+    echo "# processed: `date`"
+    echo "#"
+    echo "# This is a scc output file, do not edit"
+    echo "#"
+}
+
+
+# used by feature scripts. call this to set a variable
+# in the preamble of a created executable. subscripts
+# can use these values to make decisions
+define()
+{
+    var=$1
+    value="$2"
+
+    # make the variable real
+    eval $var="\"$value\""
+
+    echo "# _define $var '$value'"
+}
+
+# used in feature scripts
+#  - associates a kernel config frag with the feature
+kconf()
+{
+    type=$1
+    frag=$2
+    flags=$3
+
+    echo "# _kconf $type $frag"
+}
+
+mark()
+{
+    file=$1
+    start_or_end=$2
+
+    if [ "$start_or_end" = "start" ]; then
+	echo "   # _mark $file start"
+    else
+	echo "   # _mark $file end"	
+    fi
+}
+
+reloc_dir()
+{
+    dir=$1
+    
+    echo "# _reloc_dir $dir"
+}
+
+process_file()
+{
+    local in=$1
+    local containing_file=$2
+    local ret=0
+    local done=""
+
+    . $in
+
+    return 0
+}
+
+## used in the feature scripts
+## deprecated: use "define KERNEL_VERSION <value>"
+set_kernel_version()
+{
+    KERNEL_VERSION=$1
+}
+
+# Used in feature scripts
+#  - convenience wrapper for "git merge" 
+#  - arguments are git merge <args> and are passed directly to git
+merge()
+{
+    args="$@"
+
+    # call the git wrapper function. Currently with no modification or
+    # checking on the args, but the option of checking in the future is
+    # trivial once users have converted.
+    git merge $args
+}
+
+# used in feature scripts
+#  - encodes a generic git command
+git()
+{
+    echo "# _git $@"
+}
+
+# used in feature scripts
+#    arg1: the branch name
+#    arg2: the source branch name
+#    arg3 and up: flags
+branch()
+{
+    echo "# _branch_begin $@"
+}
+
+
+# used in feature scripts
+#   arg1: parent branch
+#   arg2: branch name
+scc_leaf()
+{
+    # do not use
+    true
+}
+
+# patch triggers are no longer supported. In a git context, they need
+# to trigger dynamic branching, which is complex and can end up with
+# the system not building the branch with the proper changes.
+patch_trigger()
+{
+    true
+}
+
+# ctx mods are no longer supported. In a git context, they need
+# to trigger dynamic branching, which is complex and can end up with
+# the system not building the branch with the proper changes.
+do_ctx_mod()
+{
+    true
+}
+
+# exclusions are no longer supported. In a git context, they need
+# to trigger dynamic branching, which is complex and can end up with
+# the system not building the branch with the proper changes.
+do_exclude()
+{
+    true
+}
+
+# used in feature scripts
+# arg1: the tag name
+tag()
+{
+    echo "# _git tag $1"
+}
+
+# used in feature scripts
+patch()
+{
+    this_patch=$1
+    patch_type=$2 # not currently used
+    
+    echo "# _patch $this_patch"
+}
+
+# preprocess the input files into a single large meta-script
+if [ -n "$intermediate" ]; then
+    intermediate_flags="-i"
+fi
+spp --force $intermediate_flags -o $outfile.pre $include_paths $infiles
+if [ $? -ne 0 ]; then
+    err "ERROR: could not process input files: $infiles"
+    exit 1
+fi
+
+# process the meta-script into a meta-series 
+header > $outfile
+process_file $outfile.pre $outfile.pre >> $outfile
+ret=$?
+if [ $ret -ne 0 ]; then
+    if [ -z "$intermediate" ]; then
+	rm -f $outfile
+	rm -f $outfile.pre
+    fi
+fi
+
+exit $ret

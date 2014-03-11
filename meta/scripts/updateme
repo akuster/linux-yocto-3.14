@@ -1,0 +1,564 @@
+#!/bin/bash
+
+# "updateme" script.
+
+#  Copyright (c) 2010-2012 Wind River Systems, Inc.
+
+#  This program is free software; you can redistribute it and/or modify
+#  it under the terms of the GNU General Public License version 2 as
+#  published by the Free Software Foundation.
+
+#  This program is distributed in the hope that it will be useful,
+#  but WITHOUT ANY WARRANTY; without even the implied warranty of
+#  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+#  See the GNU General Public License for more details.
+
+#  This script must be run from inside a Linux source directory
+
+usage()
+{
+cat << EOF
+
+ updateme [--no-strict] [-D<var>=<value>] [--branch ${kbranch}] [--feature <feature name>] \
+           ${ARCH} ${MACHINE} [ordered list of patches, .cfgs and features]
+
+      --no-strict: do not error if a passed feature cannot be found
+      --branch:    the branch to process for the machine definition. If not
+                   passed, the current branch will be used
+      --feature:   apply a feature named $feature to the machine description.
+                   The feature must be found in ${WORKDIR}
+      -D:          define <var> to <value> which will be available to sub scripts 
+       ${ARCH}:    The kernel architecture of the machine. This is used to locate
+                   default options/configuration.
+       ${MACHINE}: The name of the machine. This is used to locate the machine
+                   description created via 'createme'
+       [ordered list of items]: A space separated list of .scc, .patch, .cfg or
+                                defconfig items to apply to the end of the 
+                                machine description.
+
+EOF
+}
+
+# find the meta directory
+meta_dir()
+{
+    # first check to see if there's a directory of the same name
+    # as the meta branch. That's the first choice. If it doesn't exist
+    # check the meta branch name a .$meta_branch, and finally fall back
+    # to .meta if everything fails
+    if [ -n "$meta_branch" ]; then
+	if [ -d "$meta_branch" ]; then
+	    meta_dir="$meta_branch"
+	elif [ -d ".$meta_branch" ]; then
+	    meta_dir=".$meta_branch"
+	fi
+    fi
+    if [ -z "$meta_dir" ]; then
+	meta_dir=`ls -d .meta* | head -1`
+	if [ -z "$meta_dir" ]; then
+	    meta_dir=".meta"
+	fi
+    fi
+}
+
+meta_branch=$KMETA
+meta_dir
+
+if [ -z "$1" ]; then
+	usage
+	exit
+fi
+
+while [ $# -gt 0 ]; do
+	case "$1" in
+	    --help)
+		usage
+		exit
+	        ;;
+	    --feature)
+		cmd_line_features="$cmd_line_features $2"
+		shift
+		;;
+	    --branch)
+		cmd_line_branch="$2"
+		shift
+		;;
+            # deprecated. do not use
+	    --features)
+		cmd_line_features="$2"
+		shift
+		;;
+            -D*|--D*)
+                if [ "$1" == "-D" ] || [ "$1" == "--D" ]; then
+                    x=$2; shift;
+		else
+                    x=`echo $1 | sed s%^-*D%%`
+                fi
+		defines="$defines $x" ;;
+            -I*|--I*)
+                if [ "$1" == "-I" ] || [ "$1" == "--I" ]; then
+                    x=$2; shift;
+		else
+                    x=`echo $1 | sed s%^-*I%%`
+                fi
+		includes="$includes -I$x" ;;
+	    --no-strict)
+		nostrict=t
+		;;
+	    --force)
+		force=t
+		;;
+	    -v) verbose=t
+		;;
+	    *) break
+		;;
+	esac
+	shift
+done
+
+# arg1 is the ARCH
+arch=$1
+# arg2 is the machine
+machine=$2
+shift
+shift
+
+# everything else is patches, config fragments or feature descriptions
+# that are to be migrated under the kernel tree and added to the build
+patches_cfgs_sccs=$@
+
+# flags. if no-strict wasn't passed on the command line,
+# enable strict processing.
+if [ -z "$nostrict" ]; then
+	strict=t
+fi
+
+if [ -z "$cmd_line_branch" ]; then
+    CURRENT=`git branch |grep \*|sed 's/^\* //'`
+else
+    CURRENT=$cmd_line_branch
+fi
+
+##
+## create variables for use in scripts
+##
+if [ -n "$defines" ]; then
+    vars=$(echo $defines | sed 's/,/ /g')
+    for v in "$vars"; do
+        # eval makes it available for this script
+        eval $v
+	# echo makes it available for other scripts
+	dump_vars=$(echo "$dump_vars"; echo export $v)
+    done
+fi
+
+abs_path() {
+	infile=$1
+
+	if [ -z "$infile" ]; then
+		return
+	fi
+	if [ -e "$infile" ] || [ -d "$infile" ]; then
+		readlink -fn $infile
+	fi
+}
+
+gen_dirs() {
+	top_dir=$1
+
+	for dir in $includes; do
+	    x=`echo $dir | sed s%^-*I%%`
+	    if [ -d "$x" ]; then
+		search_dirs="$search_dirs $x"
+	    fi
+	done
+
+	potential=`find $top_dir -maxdepth 3 -type d -name kernel*cache`
+	for dir in $potential; do
+	    search_dirs="$search_dirs $dir"
+	    includes="-I $dir $includes"
+	done
+}
+
+add_search_include_dir() {
+	dir=$1
+
+	abs_dir=`readlink -f $dir`
+
+	echo $search_dirs | grep -q $abs_dir
+	if [ $? -ne 0 ]; then
+		search_dirs="$search_dirs $abs_dir"
+	fi
+	echo $includes | grep -q $abs_dir
+	if [ $? -ne 0 ]; then
+		includes="$includes -I $abs_dir"
+	fi
+}
+
+# demux items passed on the command line
+split_command_line_objects() {
+	command_line_values=$@
+
+	for v in $command_line_values; do
+	    v_base=`basename $v`
+	    case $v_base in
+		*.scc) migrate_feature $v
+		    ;;
+		*.cfg) migrate_cfg $v
+		    ;;
+		*.patch|*.diff) migrate_patch $v
+		    ;;
+		defconfig) migrate_cfg $v;;
+		*) ;;
+	    esac
+	done
+}
+
+migrate_cfg() {
+	c=$1
+
+	dirname=`dirname $c`
+	if [ ! -d $meta_dir/cfg/scratch/obj/$dirname ]; then
+	    mkdir -p $meta_dir/cfg/scratch/obj/$dirname
+	fi
+
+	if [ -n "$verbose" ]; then
+		echo "migrating cfg: `basename $c` to $meta_dir/cfg/scratch/obj/$dirname"
+	fi
+	cp -r $dirname/* $meta_dir/cfg/scratch/obj/$dirname
+
+	scc_files=`find $meta_dir/cfg/scratch/obj/$dirname -maxdepth 1 -type f -name *.scc`
+	b=`basename $c`
+
+	# check to see if a .scc file already includes the fragment
+	gen_feature=
+	if [ -n "$scc_files" ]; then
+		matches=`grep -l $b $scc_files`
+		if [ -z "$matches" ]; then
+			gen_feature=t
+		else
+			feat_name="$matches"
+		fi
+	else
+		gen_feature=t
+	fi
+
+	if [ -n "$gen_feature" ]; then
+		gen_feature_name="gen_`echo $dirname | sed 's%/%%g'`_desc.scc"
+
+		if [ -n "$verbose" ]; then
+			echo "generating auto feature: $gen_feature_name"
+		fi
+		echo "kconf required $b" >> $meta_dir/cfg/scratch/obj/$dirname/$gen_feature_name
+
+		feat_name="$meta_dir/cfg/scratch/obj/$dirname/$gen_feature_name"
+	fi
+	
+	# we've generated the feature, make sure it can be found
+	add_search_include_dir $meta_dir/cfg/scratch/obj/$dirname
+
+	abs_feature_path=`abs_path $feat_name`
+	echo $extra_features | grep -q $abs_feature_path
+	if [ $? -ne 0 ]; then
+		extra_features="$extra_features $abs_feature_path"
+	fi
+}
+
+
+migrate_patch() {
+	p=$1
+
+	dirname=`dirname $p`
+	b=`basename $p`
+
+	if [ ! -d $meta_dir/cfg/scratch/obj/$dirname ]; then
+		mkdir -p $meta_dir/cfg/scratch/obj/$dirname
+	fi
+
+	if [ ! -e "$meta_dir/cfg/scratch/obj/$dirname/$b" ]; then
+		if [ -n "$verbose" ]; then
+			echo "migrating patch: $b to $meta_dir/cfg/scratch/obj/$dirname"
+		fi
+		cp -r $dirname/* $meta_dir/cfg/scratch/obj/$dirname
+	fi
+
+	scc_files=`find $meta_dir/cfg/scratch/obj/$dirname -maxdepth 1 -type f -name *.scc`
+
+	# check to see if a .scc file already includes the patch
+	gen_feature=
+	if [ -n "$scc_files" ]; then
+		matches=`grep -l $b $scc_files`
+		if [ -z "$matches" ]; then
+			gen_feature=t
+		else
+			feat_name="$matches"
+		fi
+	else
+		gen_feature=t
+	fi
+
+	if [ -n "$gen_feature" ]; then
+		gen_feature_name="gen_`echo $dirname | sed 's%/%%g'`_desc.scc"
+
+		if [ -n "$verbose" ]; then
+			echo "generating auto feature: $gen_feature_name"
+		fi
+		echo "patch $b" >> $meta_dir/cfg/scratch/obj/$dirname/$gen_feature_name
+
+		feat_name="$meta_dir/cfg/scratch/obj/$dirname/$gen_feature_name"
+	fi
+	
+	# we've generated the feature, make sure it can be found
+	add_search_include_dir $meta_dir/cfg/scratch/obj/$dirname
+
+	abs_feature_path=`abs_path $feat_name`
+	echo $extra_features | grep -q $abs_feature_path
+	if [ $? -ne 0 ]; then
+		extra_features="$extra_features $abs_feature_path"
+	fi
+}
+
+migrate_feature() {
+	feat=$1
+
+	dirname=`dirname $feat`
+	featname=`basename $feat`
+	if [ ! -d $meta_dir/cfg/scratch/obj/$dirname ]; then
+		mkdir -p $meta_dir/cfg/scratch/obj/$dirname
+	fi
+
+	if [ -n "$verbose" ]; then
+		echo "migrating feature: `basename $feat` to $meta_dir/cfg/scratch/obj/$dirname"
+	fi
+	cp -r $dirname/* $meta_dir/cfg/scratch/obj/$dirname
+
+	# we've migrated the feature, make sure it can be found
+	add_search_include_dir $meta_dir/cfg/scratch/obj/$dirname
+
+	# we should *not* auto-add a .scc file that defines
+	# KMACHINE, etc. These are leaf nodes that should be
+	# explicitly requested.
+	grep -q -E "^.*define.*KMACHINE" $feat
+	if [ $? -ne 0 ]; then
+		# add it to the features to be built into the meta-series
+		extra_features="$extra_features `abs_path $meta_dir/cfg/scratch/obj/$dirname/$featname`"
+	fi
+}
+
+do_compile_prep() {
+	top_dir=$1
+
+	mkdir -p $meta_dir/cfg/scratch/obj
+	(cd $meta_dir/cfg/scratch/obj
+	    rm -f *.sco
+	)
+
+	# updates 'includes' and 'search_dirs'
+	gen_dirs $top_dir
+	includes="-I $top_dir $includes"
+	search_dirs="$top_dir $search_dirs"
+}
+
+search_includes_for_defines()
+{
+	defines=$1	
+	found_scc=
+
+	if [ -n "$defines" ]; then
+		define_tgt1=`echo $defines | cut -d: -f1`
+		define_tgt2=`echo $defines | cut -d: -f2`
+		define_tgt3=`echo $defines | cut -d: -f3`
+	fi
+
+	max_score=0
+	sccs_that_define=`find $search_dirs -name '*.scc' \
+                                | xargs grep -l -e '^[[:space:]]*define.*' | sort | uniq`
+	for scc in $sccs_that_define; do
+		score=0
+		for tgt in $define_tgt1 $define_tgt2 $define_tgt3; do
+			if [ -n "$tgt" ]; then
+				f=`grep -l -e '^[[:space:]]*define.*'$tgt'[[:space:]]*\$' $scc`
+				if [ -n "$f" ]; then
+			    	    score=`expr $score + 1`
+				fi
+			fi
+		done
+
+		if [ $score -gt $max_score ]; then
+			found_scc="$scc"
+			max_score=$score
+		elif [ $score -eq $max_score ]; then
+			found_scc="$found_scc $scc"
+		fi
+	done
+
+	# return the first target found (among equals)
+	echo "$found_scc" | cut -f2 -d' '
+}
+
+do_update() {
+	branch=$1
+	top_dir=$2
+
+	# we need to condition the branch. If it is in the form that
+	# uses / for inheritance, special processing needs to be done.
+	echo $branch | grep -q "/"
+	if [ $? -eq 0 ]; then
+	    # remove trailing "/base" that won't be in the .scc files themselves
+	    tgt=`echo $branch | sed 's%/base$%%'`
+	    # the parent branch is the second to last, i.e. standard/common_pc
+	    # so we can reverse everything and take the second field
+	    parent=`echo $tgt | rev | cut -d'/' -f2 | rev`
+	    short_branchname=`echo $tgt | rev | cut -d'/' -f1 | rev`
+	else
+	    # in dashed naming, it's $machine-$parent
+	    parent=`echo $branch | rev | cut -d'-' -f1 | rev`
+	    short_branchname=$branch
+	fi
+
+	# KDESC is MACHINE:KERNEL_TYPE
+	if [ -n "$KDESC" ]; then
+	    kmachine=`echo $KDESC | cut -d: -f1`
+	    ktype=`echo $KDESC | cut -d: -f2`
+	else
+	    KDESC="$kmachine:$ktype"
+	    kmachine=$short_branchname
+	    ktype=$parent
+	fi
+	
+	ktgt=$kmachine-$ktype
+
+	# Look for the .scc file that matches the input description
+	top_tgt=`search_includes_for_defines "$KDESC"`
+
+	# check to see that a matching KMACHINE was found
+	grep -q -e "^[[:space:]]*define[[:space:]]*KMACHINE[[:space:]]*$kmachine[[:space:]]*\$" $top_tgt
+	if [ $? -ne 0 ]; then
+	    top_tgt=""
+	fi
+
+        # if there isn't a target .. we'll need to create one
+	if [ -z "$top_tgt" ]; then
+	    target=${ktgt%-*}
+
+	    # we need to generate a baseline configuration
+	    (
+		old_pwd=`pwd`
+		cd $meta_dir/cfg/scratch/obj
+		echo "# auto generated BSP file" > $ktgt.scc
+
+		echo "define KMACHINE $kmachine" >> $ktgt.scc
+		echo "define KTYPE $ktype" >> $ktgt.scc
+		echo "define KARCH $arch" >> $ktgt.scc
+
+		if [ -n "$KDESC" ]; then
+		    echo "branch $branch" >> $ktgt.scc
+		else
+		    echo "" >> $ktgt.scc
+		    echo "include ktypes/$ktype" >> $ktgt.scc
+		    echo "branch $short_branchname" >> $ktgt.scc
+		fi
+
+		# this is a placeholder for common functionality .. i.e. the ktype, but
+		# it is not typically included by default.
+		cd $old_pwd
+		mkdir -p $meta_dir/cfg/kernel-cache/ktypes/$ktype
+
+		echo "# autogenerated $ktype kernel" >> $meta_dir/cfg/kernel-cache/ktypes/$ktype/$ktype.scc
+		if [ "$ktype" != "$kbranch" ]; then
+		    echo "branch $ktype" >> $meta_dir/cfg/kernel-cache/ktypes/$ktype/$ktype.scc
+		fi
+	    )
+
+	    top_tgt=`abs_path $meta_dir/cfg/scratch/obj/$ktgt.scc`
+	fi
+	
+	# generate branch switch code
+	if [ -n "$cmd_line_branch" ]; then
+	    old_pwd=`pwd`
+	    cd $meta_dir/cfg/scratch/obj
+	    echo "# autogenerated branch switch" > branch_switch.scc
+	    echo "branch $cmd_line_branch HEAD" >> branch_switch.scc
+	    extra_features="`abs_path branch_switch.scc` $extra_features"
+	    cd $old_pwd
+	fi
+
+	# store the name of the top level .scc file for future reference
+	echo $top_tgt > $meta_dir/top_tgt
+
+	# this builds and applies the meta-series
+	( cd $meta_dir/cfg/scratch/obj
+	    scc --force -o ../$ktgt-meta $includes $top_tgt $extra_features $addon_features
+	    if [ $? -ne 0 ]; then
+		echo "ERROR. A meta series could not be created for $top_tgt"
+	    fi
+	)
+}
+
+_strip_ext()
+{
+    # this isn't quite "basename" we want the full
+    # path, just no extension, i.e. without basename's
+    # habit of removing the last element no matter what
+    local name=$1
+    local ext=$2
+
+    if [ -n "$ext" ]; then
+	echo "$name" | sed "s%$ext$%%"
+    else
+	echo $name
+    fi
+}
+
+do_addon_features()
+{
+	feats=$@
+
+	for f in $feats; do
+	        found_feat=
+		for d in $search_dirs; do
+			if [ -n "$found_feat" ]; then
+				continue
+			fi
+
+		        search_feat=`_strip_ext $f .scc`
+			potential=`find $d | grep -E ".*/$search_feat\.scc"`
+			if [ -n "$potential" ]; then
+				addon_features="$addon_features `abs_path $potential`"
+				found_feat="$potential"
+			else
+				if [ -e "$d/$f" ]; then
+				        # if it is a directory, it is a shortcut for "<dirname>/<dirname>.scc"
+					if [ -d "$d/$f" ]; then
+					        base=`basename $f`
+						addon_features="$addon_features `abs_path $d/$f/$base.scc`"
+						found_feat="$f"
+					else
+						addon_features="$addon_features `abs_path $d/$f`"
+						found_feat="$d/$f"
+					fi
+				fi
+			fi
+		done
+		if [ -n "$strict" ] && [ -z "$found_feat" ]; then
+			echo "WARNING: addon feature \"$search_feat\" was not found"
+			missing_feat=t
+		fi
+	done
+
+	if [ -n "$missing_feat" ]; then
+		echo "ERROR: required features were not found. aborting"
+		exit 1
+	fi
+}
+
+
+# $PWD is the Linux src directory
+linux_src_dir=`pwd`
+
+do_compile_prep $linux_src_dir
+
+split_command_line_objects $patches_cfgs_sccs
+do_addon_features $cmd_line_features $features_to_find
+
+do_update $CURRENT $linux_src_dir
