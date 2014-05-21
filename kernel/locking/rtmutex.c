@@ -1001,6 +1001,11 @@ void __lockfunc rt_spin_unlock_wait(spinlock_t *lock)
 }
 EXPORT_SYMBOL(rt_spin_unlock_wait);
 
+int __lockfunc __rt_spin_trylock(struct rt_mutex *lock)
+{
+	return rt_mutex_trylock(lock);
+}
+
 int __lockfunc rt_spin_trylock(spinlock_t *lock)
 {
 	int ret = rt_mutex_trylock(&lock->lock);
@@ -1045,12 +1050,12 @@ int atomic_dec_and_spin_lock(atomic_t *atomic, spinlock_t *lock)
 	/* Subtract 1 from counter unless that drops it to 0 (ie. it was 1) */
 	if (atomic_add_unless(atomic, -1, 1))
 		return 0;
+	migrate_disable();
 	rt_spin_lock(lock);
-	if (atomic_dec_and_test(atomic)){
-		migrate_disable();
+	if (atomic_dec_and_test(atomic))
 		return 1;
-	}
 	rt_spin_unlock(lock);
+	migrate_enable();
 	return 0;
 }
 EXPORT_SYMBOL(atomic_dec_and_spin_lock);
