@@ -283,6 +283,7 @@ struct v4l2_pix_format {
 	__u32          		sizeimage;
 	__u32			colorspace;	/* enum v4l2_colorspace */
 	__u32			priv;		/* private data, depends on pixelformat */
+	__u32			flags;		/* format flags (V4L2_PIX_FMT_FLAG_*) */
 };
 
 /*      Pixel format         FOURCC                          depth  Description  */
@@ -442,6 +443,9 @@ struct v4l2_pix_format {
 
 /* priv field value to indicates that subsequent fields are valid. */
 #define V4L2_PIX_FMT_PRIV_MAGIC		0xdeadbeef
+
+/* Flags */
+#define V4L2_PIX_FMT_FLAG_PREMUL_ALPHA	0x00000001
 
 /*
  *	F O R M A T   E N U M E R A T I O N
@@ -1699,6 +1703,7 @@ struct v4l2_plane_pix_format {
  * @colorspace:		enum v4l2_colorspace; supplemental to pixelformat
  * @plane_fmt:		per-plane information
  * @num_planes:		number of planes for this format
+ * @flags:		format flags (V4L2_PIX_FMT_FLAG_*)
  */
 struct v4l2_pix_format_mplane {
 	__u32				width;
@@ -1709,7 +1714,8 @@ struct v4l2_pix_format_mplane {
 
 	struct v4l2_plane_pix_format	plane_fmt[VIDEO_MAX_PLANES];
 	__u8				num_planes;
-	__u8				reserved[11];
+	__u8				flags;
+	__u8				reserved[10];
 } __attribute__ ((packed));
 
 /**
