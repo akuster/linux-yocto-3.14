@@ -882,28 +882,14 @@ void rt_mutex_adjust_pi(struct task_struct *task)
 		raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 		return;
 	}
-<<<<<<< HEAD
 
-||||||| merged common ancestors
-
-	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
-
-=======
 	next_lock = waiter->lock;
-	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 
->>>>>>> standard/base
 	/* gets dropped in rt_mutex_adjust_prio_chain()! */
 	get_task_struct(task);
-<<<<<<< HEAD
-	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
-	rt_mutex_adjust_prio_chain(task, 0, NULL, NULL, task);
-||||||| merged common ancestors
-	rt_mutex_adjust_prio_chain(task, 0, NULL, NULL, task);
-=======
 
+	raw_spin_unlock_irqrestore(&task->pi_lock, flags);
 	rt_mutex_adjust_prio_chain(task, 0, NULL, next_lock, NULL, task);
->>>>>>> standard/base
 }
 
 #ifdef CONFIG_PREEMPT_RT_FULL
@@ -1314,7 +1300,6 @@ __rt_mutex_slowlock(struct rt_mutex *lock, int state,
 	return ret;
 }
 
-<<<<<<< HEAD
 static __always_inline void ww_mutex_lock_acquired(struct ww_mutex *ww,
 		struct ww_acquire_ctx *ww_ctx)
 {
@@ -1391,8 +1376,6 @@ static void ww_mutex_account_lock(struct rt_mutex *lock,
 }
 #endif
 
-||||||| merged common ancestors
-=======
 static void rt_mutex_handle_deadlock(int res, int detect_deadlock,
 				     struct rt_mutex_waiter *w)
 {
@@ -1413,7 +1396,6 @@ static void rt_mutex_handle_deadlock(int res, int detect_deadlock,
 	}
 }
 
->>>>>>> standard/base
 /*
  * Slow path lock function:
  */
@@ -1455,14 +1437,10 @@ rt_mutex_slowlock(struct rt_mutex *lock, int state,
 
 	if (unlikely(ret)) {
 		remove_waiter(lock, &waiter);
-<<<<<<< HEAD
-	else if (ww_ctx)
-		ww_mutex_account_lock(lock, ww_ctx);
-||||||| merged common ancestors
-=======
 		rt_mutex_handle_deadlock(ret, detect_deadlock, &waiter);
+	} else if (ww_ctx) {
+		ww_mutex_account_lock(lock, ww_ctx);
 	}
->>>>>>> standard/base
 
 	/*
 	 * try_to_take_rt_mutex() sets the waiter bit
@@ -1832,7 +1810,6 @@ int rt_mutex_start_proxy_lock(struct rt_mutex *lock,
 		return 1;
 	}
 
-<<<<<<< HEAD
 #ifdef CONFIG_PREEMPT_RT_FULL
 	/*
 	 * In PREEMPT_RT there's an added race.
@@ -1862,13 +1839,8 @@ int rt_mutex_start_proxy_lock(struct rt_mutex *lock,
 	raw_spin_unlock_irq(&task->pi_lock);
 #endif
 
-	ret = task_blocks_on_rt_mutex(lock, waiter, task, detect_deadlock);
-||||||| merged common ancestors
-	ret = task_blocks_on_rt_mutex(lock, waiter, task, detect_deadlock);
-=======
 	/* We enforce deadlock detection for futexes */
 	ret = task_blocks_on_rt_mutex(lock, waiter, task, 1);
->>>>>>> standard/base
 
 	if (ret && !rt_mutex_owner(lock)) {
 		/*
