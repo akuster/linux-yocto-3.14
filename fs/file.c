@@ -820,8 +820,10 @@ static int do_dup2(struct files_struct *files,
 
 #ifdef CONFIG_CGROUP_FILES
 	if (!tofree)
-		if (!files_cgroup_alloc_fd(files, 1))
-			goto Ebusy;
+		if (files_cgroup_alloc_fd(files, 1)) {
+			spin_unlock(&files->file_lock);
+			return -EMFILE;
+		}
 #endif
 
 	get_file(file);

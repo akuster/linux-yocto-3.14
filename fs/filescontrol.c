@@ -23,8 +23,8 @@
 #include <linux/fs.h>
 #include <linux/fdtable.h>
 
-struct cgroup_subsys files_cgrp_subsys __read_mostly;
-EXPORT_SYMBOL(files_cgrp_subsys);
+struct cgroup_subsys files_subsys __read_mostly;
+EXPORT_SYMBOL(files_subsys);
 
 struct files_cgroup {
 	struct cgroup_subsys_state css;
@@ -92,9 +92,10 @@ u64 files_cgroup_count_fds(struct files_struct *files)
 
 static u64 files_in_taskset(struct cgroup_taskset *tset)
 {
+	struct cgroup_subsys_state *css = NULL;
 	struct task_struct *task;
 	u64 files = 0;
-	cgroup_taskset_for_each(task, tset) {
+	cgroup_taskset_for_each(task, css, tset) {
 		if (!thread_group_leader(task))
 			continue;
 
@@ -212,13 +213,14 @@ static struct cftype files[] = {
 	{ }
 };
 
-struct cgroup_subsys files_cgrp_subsys = {
+struct cgroup_subsys files_subsys = {
 	.name = "files",
 	.css_alloc = files_cgroup_css_alloc,
 	.css_free = files_cgroup_css_free,
 	.can_attach = files_cgroup_can_attach,
 	.attach = files_cgroup_attach,
 	.base_cftypes = files,
+	.subsys_id = files_subsys_id,
 };
 
 void files_cgroup_assign(struct files_struct *files)
@@ -227,7 +229,7 @@ void files_cgroup_assign(struct files_struct *files)
 	struct cgroup_subsys_state *css;
 
 	task_lock(tsk);
-	css = task_css(tsk, files_cgrp_id);
+	css = task_css(tsk, files_subsys_id);
 	css_get(css);
 	files->files_cgroup = container_of(css, struct files_cgroup, css);
 	task_unlock(tsk);

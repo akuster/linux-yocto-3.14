@@ -51,7 +51,7 @@ SUBSYS(net_prio)
 SUBSYS(hugetlb)
 #endif
 
-#if IS_ENABLED(CONFIG_CGROUP_FILES)
+#if IS_SUBSYS_ENABLED(CONFIG_CGROUP_FILES)
 SUBSYS(files)
 #endif
 
