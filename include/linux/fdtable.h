@@ -57,6 +57,9 @@ struct files_struct {
 	unsigned long close_on_exec_init[1];
 	unsigned long open_fds_init[1];
 	struct file __rcu * fd_array[NR_OPEN_DEFAULT];
+#ifdef CONFIG_CGROUP_FILES
+	struct files_cgroup *files_cgroup;
+#endif
 };
 
 struct file_operations;
