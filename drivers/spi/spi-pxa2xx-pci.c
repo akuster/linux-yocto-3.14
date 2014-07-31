@@ -7,9 +7,6 @@
 #include <linux/of_device.h>
 #include <linux/module.h>
 #include <linux/spi/pxa2xx_spi.h>
-#include <linux/clk.h>
-#include <linux/clkdev.h>
-#include <linux/clk-provider.h>
 
 enum {
 	PORT_CE4100,
@@ -24,7 +21,6 @@ struct pxa_spi_info {
 	int tx_chan_id;
 	int rx_slave_id;
 	int rx_chan_id;
-	unsigned long max_clk_rate;
 };
 
 static struct pxa_spi_info spi_info_configs[] = {
@@ -36,7 +32,6 @@ static struct pxa_spi_info spi_info_configs[] = {
 		.tx_chan_id = -1,
 		.rx_slave_id = -1,
 		.rx_chan_id = -1,
-		.max_clk_rate = 3686400,
 	},
 	[PORT_BYT] = {
 		.type = LPSS_SSP,
@@ -46,7 +41,6 @@ static struct pxa_spi_info spi_info_configs[] = {
 		.tx_chan_id = 0,
 		.rx_slave_id = 1,
 		.rx_chan_id = 1,
-		.max_clk_rate = 50000000,
 	},
 };
 
@@ -59,8 +53,6 @@ static int pxa2xx_spi_pci_probe(struct pci_dev *dev,
 	struct pxa2xx_spi_master spi_pdata;
 	struct ssp_device *ssp;
 	struct pxa_spi_info *c;
-	struct clk *clk;
-	char buf[40];
 
 	ret = pcim_enable_device(dev);
 	if (ret)
@@ -91,15 +83,6 @@ static int pxa2xx_spi_pci_probe(struct pci_dev *dev,
 	ssp->irq = dev->irq;
 	ssp->port_id = (c->port_id >= 0) ? c->port_id : dev->devfn;
 	ssp->type = c->type;
-
-	clk = clk_register_fixed_rate(NULL, "spi_pxa2xx_clk", NULL,
-					CLK_IS_ROOT, c->max_clk_rate);
-	 if (IS_ERR(clk))
-		return PTR_ERR(clk);
-
-	snprintf(buf, sizeof(buf), "pxa2xx-spi.%d", ssp->port_id);
-
-	clk_register_clkdev(clk, NULL, buf);
 
 	memset(&pi, 0, sizeof(pi));
 	pi.parent = &dev->dev;
