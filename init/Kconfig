@@ -1075,6 +1075,13 @@ config DEBUG_BLK_CGROUP
 	Enable some debugging help. Currently it exports additional stat
 	files in a cgroup which can be useful for debugging.
 
+config CGROUP_FILES
+	bool "Files Resource Controller for Control Groups"
+	default n
+	help
+	  Provides a cgroup resource controller that limits number of open
+	  file handles within a cgroup.
+
 endif # CGROUPS
 
 config CHECKPOINT_RESTORE
