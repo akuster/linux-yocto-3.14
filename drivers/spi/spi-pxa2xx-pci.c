@@ -8,7 +8,6 @@
 #include <linux/module.h>
 #include <linux/spi/pxa2xx_spi.h>
 #include <linux/clk.h>
-#include <linux/clkdev.h>
 #include <linux/clk-provider.h>
 
 enum {
@@ -59,7 +58,6 @@ static int pxa2xx_spi_pci_probe(struct pci_dev *dev,
 	struct pxa2xx_spi_master spi_pdata;
 	struct ssp_device *ssp;
 	struct pxa_spi_info *c;
-	struct clk *clk;
 	char buf[40];
 
 	ret = pcim_enable_device(dev);
@@ -92,14 +90,11 @@ static int pxa2xx_spi_pci_probe(struct pci_dev *dev,
 	ssp->port_id = (c->port_id >= 0) ? c->port_id : dev->devfn;
 	ssp->type = c->type;
 
-	clk = clk_register_fixed_rate(NULL, "spi_pxa2xx_clk", NULL,
-					CLK_IS_ROOT, c->max_clk_rate);
-	 if (IS_ERR(clk))
-		return PTR_ERR(clk);
-
 	snprintf(buf, sizeof(buf), "pxa2xx-spi.%d", ssp->port_id);
-
-	clk_register_clkdev(clk, NULL, buf);
+	ssp->clk = clk_register_fixed_rate(&dev->dev, buf , NULL,
+					CLK_IS_ROOT, c->max_clk_rate);
+	 if (IS_ERR(ssp->clk))
+		return PTR_ERR(ssp->clk);
 
 	memset(&pi, 0, sizeof(pi));
 	pi.parent = &dev->dev;
@@ -109,8 +104,10 @@ static int pxa2xx_spi_pci_probe(struct pci_dev *dev,
 	pi.size_data = sizeof(spi_pdata);
 
 	pdev = platform_device_register_full(&pi);
-	if (IS_ERR(pdev))
+	if (IS_ERR(pdev)) {
+		clk_unregister(ssp->clk);
 		return PTR_ERR(pdev);
+	}
 
 	pci_set_drvdata(dev, pdev);
 
@@ -120,8 +117,13 @@ static int pxa2xx_spi_pci_probe(struct pci_dev *dev,
 static void pxa2xx_spi_pci_remove(struct pci_dev *dev)
 {
 	struct platform_device *pdev = pci_get_drvdata(dev);
+	struct pxa2xx_spi_master *spi_pdata;
+
+	spi_pdata = dev_get_platdata(&pdev->dev);
 
 	platform_device_unregister(pdev);
+	clk_unregister(spi_pdata->ssp.clk);
+	pci_set_drvdata(dev, NULL);
 }
 
 static const struct pci_device_id pxa2xx_spi_pci_devices[] = {
