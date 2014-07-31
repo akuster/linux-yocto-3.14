@@ -1055,6 +1055,7 @@ pxa2xx_spi_acpi_get_pdata(struct platform_device *pdev)
 	if (IS_ERR(ssp->mmio_base))
 		return NULL;
 
+	ssp->clk = devm_clk_get(&pdev->dev, NULL);
 	ssp->irq = platform_get_irq(pdev, 0);
 	ssp->type = LPSS_SSP;
 	ssp->pdev = pdev;
@@ -1180,10 +1181,6 @@ static int pxa2xx_spi_probe(struct platform_device *pdev)
 	}
 
 	/* Enable SOC clock */
-	ssp->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(ssp->clk))
-		return PTR_ERR(ssp->clk);
-
 	clk_prepare_enable(ssp->clk);
 
 	drv_data->max_clk_rate = clk_get_rate(ssp->clk);
