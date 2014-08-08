@@ -1,6 +1,7 @@
 #include <linux/cgroup.h>
 #include <linux/res_counter.h>
 #include <linux/mm.h>
+#include <linux/mman.h>
 #include <linux/slab.h>
 #include <linux/rcupdate.h>
 #include <linux/shmem_fs.h>
@@ -65,6 +66,9 @@ static int vm_cgroup_do_charge(struct vm_cgroup *vmcg,
 	unsigned long val = nr_pages << PAGE_SHIFT;
 	struct res_counter *fail_res;
 
+	if (vm_cgroup_is_root(vmcg))
+		return 0;
+
 	return res_counter_charge(&vmcg->res, val, &fail_res);
 }
 
@@ -72,6 +76,9 @@ static void vm_cgroup_do_uncharge(struct vm_cgroup *vmcg,
 				  unsigned long nr_pages)
 {
 	unsigned long val = nr_pages << PAGE_SHIFT;
+
+	if (vm_cgroup_is_root(vmcg))
+		return;
 
 	res_counter_uncharge(&vmcg->res, val);
 }
@@ -158,6 +165,9 @@ static u64 vm_cgroup_read_u64(struct cgroup_subsys_state *css,
 {
 	struct vm_cgroup *vmcg = vm_cgroup_from_css(css);
 	int memb = cft->private;
+
+	if (vm_cgroup_is_root(vmcg))
+		return vm_memory_committed() << PAGE_SHIFT;
 
 	return res_counter_read_u64(&vmcg->res, memb);
 }
