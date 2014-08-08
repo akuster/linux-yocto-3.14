@@ -24,6 +24,7 @@
 #include <linux/migrate.h>
 #include <linux/perf_event.h>
 #include <linux/ksm.h>
+#include <linux/vm_cgroup.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
@@ -241,8 +242,12 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 		if (!(oldflags & (VM_ACCOUNT|VM_WRITE|VM_HUGETLB|
 						VM_SHARED|VM_NORESERVE))) {
 			charged = nrpages;
-			if (security_vm_enough_memory_mm(mm, charged))
+			if (vm_cgroup_charge_memory_mm(mm, charged))
 				return -ENOMEM;
+			if (security_vm_enough_memory_mm(mm, charged)) {
+				vm_cgroup_uncharge_memory_mm(mm, charged);
+				return -ENOMEM;
+			}
 			newflags |= VM_ACCOUNT;
 		}
 	}
@@ -296,6 +301,7 @@ success:
 
 fail:
 	vm_unacct_memory(charged);
+	vm_cgroup_uncharge_memory_mm(mm, charged);
 	return error;
 }
 

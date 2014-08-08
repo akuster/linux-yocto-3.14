@@ -2,6 +2,7 @@
 #include <linux/res_counter.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
+#include <linux/rcupdate.h>
 #include <linux/vm_cgroup.h>
 
 struct vm_cgroup {
@@ -23,6 +24,72 @@ static inline bool vm_cgroup_is_root(struct vm_cgroup *vmcg)
 static struct vm_cgroup *vm_cgroup_from_css(struct cgroup_subsys_state *s)
 {
 	return s ? container_of(s, struct vm_cgroup, css) : NULL;
+}
+
+static struct vm_cgroup *vm_cgroup_from_task(struct task_struct *p)
+{
+	return vm_cgroup_from_css(task_css(p, vm_cgrp_id));
+}
+
+static struct vm_cgroup *get_vm_cgroup_from_task(struct task_struct *p)
+{
+	struct vm_cgroup *vmcg;
+
+	rcu_read_lock();
+	do {
+		vmcg = vm_cgroup_from_task(p);
+	} while (!css_tryget_online(&vmcg->css));
+	rcu_read_unlock();
+
+	return vmcg;
+}
+
+void mm_init_vm_cgroup(struct mm_struct *mm, struct task_struct *p)
+{
+	if (!vm_cgroup_disabled())
+		mm->vmcg = get_vm_cgroup_from_task(p);
+}
+
+void mm_release_vm_cgroup(struct mm_struct *mm)
+{
+	struct vm_cgroup *vmcg = mm->vmcg;
+
+	if (vmcg)
+		css_put(&vmcg->css);
+}
+
+static int vm_cgroup_do_charge(struct vm_cgroup *vmcg,
+			       unsigned long nr_pages)
+{
+	unsigned long val = nr_pages << PAGE_SHIFT;
+	struct res_counter *fail_res;
+
+	return res_counter_charge(&vmcg->res, val, &fail_res);
+}
+
+static void vm_cgroup_do_uncharge(struct vm_cgroup *vmcg,
+				  unsigned long nr_pages)
+{
+	unsigned long val = nr_pages << PAGE_SHIFT;
+
+	res_counter_uncharge(&vmcg->res, val);
+}
+
+int vm_cgroup_charge_memory_mm(struct mm_struct *mm, unsigned long nr_pages)
+{
+	struct vm_cgroup *vmcg = mm->vmcg;
+
+	if (vmcg)
+		return vm_cgroup_do_charge(vmcg, nr_pages);
+	return 0;
+}
+
+void vm_cgroup_uncharge_memory_mm(struct mm_struct *mm, unsigned long nr_pages)
+{
+	struct vm_cgroup *vmcg = mm->vmcg;
+
+	if (vmcg)
+		vm_cgroup_do_uncharge(vmcg, nr_pages);
 }
 
 static struct cgroup_subsys_state *
