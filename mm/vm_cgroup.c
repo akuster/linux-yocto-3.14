@@ -28,7 +28,7 @@ static struct vm_cgroup *vm_cgroup_from_css(struct cgroup_subsys_state *s)
 
 static struct vm_cgroup *vm_cgroup_from_task(struct task_struct *p)
 {
-	return vm_cgroup_from_css(task_css(p, vm_cgrp_id));
+	return vm_cgroup_from_css(task_css(p, vm_subsys_id));
 }
 
 static struct vm_cgroup *get_vm_cgroup_from_task(struct task_struct *p)
