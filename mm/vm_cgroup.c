@@ -3,6 +3,7 @@
 #include <linux/mm.h>
 #include <linux/slab.h>
 #include <linux/rcupdate.h>
+#include <linux/shmem_fs.h>
 #include <linux/vm_cgroup.h>
 
 struct vm_cgroup {
@@ -91,6 +92,41 @@ void vm_cgroup_uncharge_memory_mm(struct mm_struct *mm, unsigned long nr_pages)
 	if (vmcg)
 		vm_cgroup_do_uncharge(vmcg, nr_pages);
 }
+
+#ifdef CONFIG_SHMEM
+void shmem_init_vm_cgroup(struct shmem_inode_info *info)
+{
+	if (!vm_cgroup_disabled())
+		info->vmcg = get_vm_cgroup_from_task(current);
+}
+
+void shmem_release_vm_cgroup(struct shmem_inode_info *info)
+{
+	struct vm_cgroup *vmcg = info->vmcg;
+
+	if (vmcg)
+		css_put(&vmcg->css);
+}
+
+int vm_cgroup_charge_shmem(struct shmem_inode_info *info,
+			   unsigned long nr_pages)
+{
+	struct vm_cgroup *vmcg = info->vmcg;
+
+	if (vmcg)
+		return vm_cgroup_do_charge(vmcg, nr_pages);
+	return 0;
+}
+
+void vm_cgroup_uncharge_shmem(struct shmem_inode_info *info,
+			      unsigned long nr_pages)
+{
+	struct vm_cgroup *vmcg = info->vmcg;
+
+	if (vmcg)
+		vm_cgroup_do_uncharge(info->vmcg, nr_pages);
+}
+#endif /* CONFIG_SHMEM */
 
 static struct cgroup_subsys_state *
 vm_cgroup_css_alloc(struct cgroup_subsys_state *parent_css)

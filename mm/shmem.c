@@ -66,6 +66,7 @@ static struct vfsmount *shm_mnt;
 #include <linux/highmem.h>
 #include <linux/seq_file.h>
 #include <linux/magic.h>
+#include <linux/vm_cgroup.h>
 
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
@@ -130,6 +131,27 @@ static inline struct shmem_sb_info *SHMEM_SB(struct super_block *sb)
 	return sb->s_fs_info;
 }
 
+static inline int __shmem_acct_memory(struct shmem_inode_info *info,
+				      long pages)
+{
+	int ret;
+
+	ret = vm_cgroup_charge_shmem(info, pages);
+	if (ret)
+		return ret;
+	ret = security_vm_enough_memory_mm(current->mm, pages);
+	if (ret)
+		vm_cgroup_uncharge_shmem(info, pages);
+	return ret;
+}
+
+static inline void __shmem_unacct_memory(struct shmem_inode_info *info,
+					 long pages)
+{
+	vm_unacct_memory(pages);
+	vm_cgroup_uncharge_shmem(info, pages);
+}
+
 /*
  * shmem_file_setup pre-accounts the whole fixed size of a VM object,
  * for shared memory and for shared anonymous (/dev/zero) mappings
@@ -141,7 +163,7 @@ static inline int shmem_acct_size(struct inode *inode)
 	struct shmem_inode_info *info = SHMEM_I(inode);
 
 	return (info->flags & VM_NORESERVE) ?
-		0 : security_vm_enough_memory_mm(current->mm, VM_ACCT(inode->i_size));
+		0 : __shmem_acct_memory(info, VM_ACCT(inode->i_size));
 }
 
 static inline void shmem_unacct_size(struct inode *inode)
@@ -149,7 +171,7 @@ static inline void shmem_unacct_size(struct inode *inode)
 	struct shmem_inode_info *info = SHMEM_I(inode);
 
 	if (!(info->flags & VM_NORESERVE))
-		vm_unacct_memory(VM_ACCT(inode->i_size));
+		__shmem_unacct_memory(info, VM_ACCT(inode->i_size));
 }
 
 /*
@@ -163,7 +185,7 @@ static inline int shmem_acct_block(struct inode *inode)
 	struct shmem_inode_info *info = SHMEM_I(inode);
 
 	return (info->flags & VM_NORESERVE) ?
-		security_vm_enough_memory_mm(current->mm, VM_ACCT(PAGE_CACHE_SIZE)) : 0;
+		__shmem_acct_memory(info, VM_ACCT(PAGE_CACHE_SIZE)) : 0;
 }
 
 static inline void shmem_unacct_blocks(struct inode *inode, long pages)
@@ -171,7 +193,7 @@ static inline void shmem_unacct_blocks(struct inode *inode, long pages)
 	struct shmem_inode_info *info = SHMEM_I(inode);
 
 	if (info->flags & VM_NORESERVE)
-		vm_unacct_memory(pages * VM_ACCT(PAGE_CACHE_SIZE));
+		__shmem_unacct_memory(info, pages * VM_ACCT(PAGE_CACHE_SIZE));
 }
 
 static const struct super_operations shmem_ops;
@@ -1404,6 +1426,7 @@ static struct inode *shmem_get_inode(struct super_block *sb, const struct inode 
 			inode->i_fop = &shmem_file_operations;
 			mpol_shared_policy_init(&info->policy,
 						 shmem_get_sbmpol(sbinfo));
+			shmem_init_vm_cgroup(info);
 			break;
 		case S_IFDIR:
 			inc_nlink(inode);
@@ -2677,8 +2700,12 @@ static void shmem_destroy_callback(struct rcu_head *head)
 
 static void shmem_destroy_inode(struct inode *inode)
 {
-	if (S_ISREG(inode->i_mode))
-		mpol_free_shared_policy(&SHMEM_I(inode)->policy);
+	struct shmem_inode_info *info = SHMEM_I(inode);
+
+	if (S_ISREG(inode->i_mode)) {
+		mpol_free_shared_policy(&info->policy);
+		shmem_release_vm_cgroup(info);
+	}
 	call_rcu(&inode->i_rcu, shmem_destroy_callback);
 }
 
