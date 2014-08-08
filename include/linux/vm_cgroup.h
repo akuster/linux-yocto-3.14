@@ -4,7 +4,7 @@
 #ifdef CONFIG_CGROUP_VM
 static inline bool vm_cgroup_disabled(void)
 {
-	if (vm_cgrp_subsys.disabled)
+	if (vm_subsys.disabled)
 		return true;
 	return false;
 }

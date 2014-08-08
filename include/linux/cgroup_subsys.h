@@ -55,7 +55,7 @@ SUBSYS(hugetlb)
 SUBSYS(files)
 #endif
 
-#if IS_ENABLED(CONFIG_CGROUP_VM)
+#if IS_SUBSYS_ENABLED(CONFIG_CGROUP_VM)
 SUBSYS(vm)
 #endif
 

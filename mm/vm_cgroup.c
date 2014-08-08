@@ -59,30 +59,22 @@ static u64 vm_cgroup_read_u64(struct cgroup_subsys_state *css,
 	return res_counter_read_u64(&vmcg->res, memb);
 }
 
-static ssize_t vm_cgroup_write(struct kernfs_open_file *of,
-			       char *buf, size_t nbytes, loff_t off)
+static int vm_cgroup_write(struct cgroup_subsys_state *css,
+		struct cftype *cft, u64 value)
 {
-	struct vm_cgroup *vmcg = vm_cgroup_from_css(of_css(of));
-	unsigned long long val;
-	int ret;
+	struct vm_cgroup *vmcg = vm_cgroup_from_css(css);
 
 	if (vm_cgroup_is_root(vmcg))
 		return -EINVAL;
 
-	buf = strstrip(buf);
-	ret = res_counter_memparse_write_strategy(buf, &val);
-	if (ret)
-		return ret;
-
-	ret = res_counter_set_limit(&vmcg->res, val);
-	return ret ?: nbytes;
+	return res_counter_set_limit(&vmcg->res, value);
 }
 
-static ssize_t vm_cgroup_reset(struct kernfs_open_file *of, char *buf,
-			       size_t nbytes, loff_t off)
+static int vm_cgroup_reset(struct cgroup_subsys_state *css,
+		struct cftype *cft, u64 value)
 {
-	struct vm_cgroup *vmcg= vm_cgroup_from_css(of_css(of));
-	int memb = of_cft(of)->private;
+	struct vm_cgroup *vmcg= vm_cgroup_from_css(css);
+	int memb = cft->private;
 
 	switch (memb) {
 	case RES_MAX_USAGE:
@@ -94,7 +86,7 @@ static ssize_t vm_cgroup_reset(struct kernfs_open_file *of, char *buf,
 	default:
 		BUG();
 	}
-	return nbytes;
+	return 0;
 }
 
 static struct cftype vm_cgroup_files[] = {
@@ -106,26 +98,28 @@ static struct cftype vm_cgroup_files[] = {
 	{
 		.name = "max_usage_in_bytes",
 		.private = RES_MAX_USAGE,
-		.write = vm_cgroup_reset,
+		.write_u64 = vm_cgroup_reset,
 		.read_u64 = vm_cgroup_read_u64,
 	},
 	{
 		.name = "limit_in_bytes",
 		.private = RES_LIMIT,
-		.write = vm_cgroup_write,
+		.write_u64 = vm_cgroup_write,
 		.read_u64 = vm_cgroup_read_u64,
 	},
 	{
 		.name = "failcnt",
 		.private = RES_FAILCNT,
-		.write = vm_cgroup_reset,
+		.write_u64 = vm_cgroup_reset,
 		.read_u64 = vm_cgroup_read_u64,
 	},
 	{ },	/* terminate */
 };
 
-struct cgroup_subsys vm_cgrp_subsys = {
+struct cgroup_subsys vm_subsys = {
+	.name = "vm",
 	.css_alloc = vm_cgroup_css_alloc,
 	.css_free = vm_cgroup_css_free,
 	.base_cftypes = vm_cgroup_files,
+	.subsys_id = vm_subsys_id,
 };
