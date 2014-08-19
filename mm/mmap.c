@@ -36,6 +36,7 @@
 #include <linux/sched/sysctl.h>
 #include <linux/notifier.h>
 #include <linux/memory.h>
+#include <linux/vm_cgroup.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -1531,8 +1532,12 @@ munmap_back:
 	 */
 	if (accountable_mapping(file, vm_flags)) {
 		charged = len >> PAGE_SHIFT;
-		if (security_vm_enough_memory_mm(mm, charged))
+		if (vm_cgroup_charge_memory_mm(mm, charged))
 			return -ENOMEM;
+		if (security_vm_enough_memory_mm(mm, charged)) {
+			vm_cgroup_uncharge_memory_mm(mm, charged);
+			return -ENOMEM;
+		}
 		vm_flags |= VM_ACCOUNT;
 	}
 
@@ -1648,8 +1653,10 @@ unmap_and_free_vma:
 free_vma:
 	kmem_cache_free(vm_area_cachep, vma);
 unacct_error:
-	if (charged)
+	if (charged) {
 		vm_unacct_memory(charged);
+		vm_cgroup_uncharge_memory_mm(mm, charged);
+	}
 	return error;
 }
 
@@ -2081,12 +2088,16 @@ static int acct_stack_growth(struct vm_area_struct *vma, unsigned long size, uns
 	if (is_hugepage_only_range(vma->vm_mm, new_start, size))
 		return -EFAULT;
 
+	if (vm_cgroup_charge_memory_mm(mm, grow))
+		return -ENOMEM;
 	/*
 	 * Overcommit..  This must be the final test, as it will
 	 * update security statistics.
 	 */
-	if (security_vm_enough_memory_mm(mm, grow))
+	if (security_vm_enough_memory_mm(mm, grow)) {
+		vm_cgroup_uncharge_memory_mm(mm, grow);
 		return -ENOMEM;
+	}
 
 	/* Ok, everything looks good - let it rip */
 	if (vma->vm_flags & VM_LOCKED)
@@ -2338,6 +2349,7 @@ static void remove_vma_list(struct mm_struct *mm, struct vm_area_struct *vma)
 		vma = remove_vma(vma);
 	} while (vma);
 	vm_unacct_memory(nr_accounted);
+	vm_cgroup_uncharge_memory_mm(mm, nr_accounted);
 	validate_mm(mm);
 }
 
@@ -2598,6 +2610,7 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 	unsigned long flags;
 	struct rb_node ** rb_link, * rb_parent;
 	pgoff_t pgoff = addr >> PAGE_SHIFT;
+	unsigned long charged;
 	int error;
 
 	len = PAGE_ALIGN(len);
@@ -2637,8 +2650,13 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 	if (mm->map_count > sysctl_max_map_count)
 		return -ENOMEM;
 
-	if (security_vm_enough_memory_mm(mm, len >> PAGE_SHIFT))
+	charged = len >> PAGE_SHIFT;
+	if (vm_cgroup_charge_memory_mm(mm, charged))
 		return -ENOMEM;
+	if (security_vm_enough_memory_mm(mm, charged)) {
+		vm_cgroup_uncharge_memory_mm(mm, charged);
+		return -ENOMEM;
+	}
 
 	/* Can we just expand an old private anonymous mapping? */
 	vma = vma_merge(mm, prev, addr, addr + len, flags,
@@ -2651,7 +2669,8 @@ static unsigned long do_brk(unsigned long addr, unsigned long len)
 	 */
 	vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
 	if (!vma) {
-		vm_unacct_memory(len >> PAGE_SHIFT);
+		vm_unacct_memory(charged);
+		vm_cgroup_uncharge_memory_mm(mm, charged);
 		return -ENOMEM;
 	}
 
@@ -2733,6 +2752,7 @@ void exit_mmap(struct mm_struct *mm)
 		vma = remove_vma(vma);
 	}
 	vm_unacct_memory(nr_accounted);
+	vm_cgroup_uncharge_memory_mm(mm, nr_accounted);
 
 	WARN_ON(atomic_long_read(&mm->nr_ptes) >
 			(FIRST_USER_ADDRESS+PMD_SIZE-1)>>PMD_SHIFT);
@@ -2766,9 +2786,16 @@ int insert_vm_struct(struct mm_struct *mm, struct vm_area_struct *vma)
 	if (find_vma_links(mm, vma->vm_start, vma->vm_end,
 			   &prev, &rb_link, &rb_parent))
 		return -ENOMEM;
-	if ((vma->vm_flags & VM_ACCOUNT) &&
-	     security_vm_enough_memory_mm(mm, vma_pages(vma)))
-		return -ENOMEM;
+	if ((vma->vm_flags & VM_ACCOUNT)) {
+		unsigned long charged = vma_pages(vma);
+
+		if (vm_cgroup_charge_memory_mm(mm, charged))
+			return -ENOMEM;
+		if (security_vm_enough_memory_mm(mm, charged)) {
+			vm_cgroup_uncharge_memory_mm(mm, charged);
+			return -ENOMEM;
+		}
+	}
 
 	vma_link(mm, vma, prev, rb_link, rb_parent);
 	return 0;
