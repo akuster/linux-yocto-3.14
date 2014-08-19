@@ -420,6 +420,9 @@ struct mm_struct {
 	 */
 	struct task_struct __rcu *owner;
 #endif
+#ifdef CONFIG_CGROUP_VM
+	struct vm_cgroup *vmcg;		/* vm_cgroup this mm is accounted to */
+#endif
 
 	/* store ref to file /proc/<pid>/exe symlink points to */
 	struct file *exe_file;
