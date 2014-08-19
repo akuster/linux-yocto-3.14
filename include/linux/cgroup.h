@@ -121,6 +121,23 @@ static inline bool css_tryget(struct cgroup_subsys_state *css)
 }
 
 /**
+ * css_tryget_online - try to obtain a reference on the specified css if online
+ * @css: target css
+ *
+ * Obtain a reference on @css if it's online.  The caller naturally needs
+ * to ensure that @css is accessible but doesn't have to be holding a
+ * reference on it - IOW, RCU protected access is good enough for this
+ * function.  Returns %true if a reference count was successfully obtained;
+ * %false otherwise.
+ */
+static inline bool css_tryget_online(struct cgroup_subsys_state *css)
+{
+       if (css->flags & CSS_ROOT)
+               return true;
+       return percpu_ref_tryget_live(&css->refcnt);
+}
+
+/**
  * css_put - put a css reference
  * @css: target css
  *
