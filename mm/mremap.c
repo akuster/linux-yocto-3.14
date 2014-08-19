@@ -21,6 +21,7 @@
 #include <linux/syscalls.h>
 #include <linux/mmu_notifier.h>
 #include <linux/sched/sysctl.h>
+#include <linux/vm_cgroup.h>
 
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
@@ -313,6 +314,7 @@ static unsigned long move_vma(struct vm_area_struct *vma,
 	if (do_munmap(mm, old_addr, old_len) < 0) {
 		/* OOM: unable to split vma, just get accounts right */
 		vm_unacct_memory(excess >> PAGE_SHIFT);
+		vm_cgroup_uncharge_memory_mm(mm, excess >> PAGE_SHIFT);
 		excess = 0;
 	}
 	mm->hiwater_vm = hiwater_vm;
@@ -374,8 +376,13 @@ static struct vm_area_struct *vma_to_resize(unsigned long addr,
 
 	if (vma->vm_flags & VM_ACCOUNT) {
 		unsigned long charged = (new_len - old_len) >> PAGE_SHIFT;
-		if (security_vm_enough_memory_mm(mm, charged))
+
+		if (vm_cgroup_charge_memory_mm(mm, charged))
 			goto Efault;
+		if (security_vm_enough_memory_mm(mm, charged)) {
+			vm_cgroup_uncharge_memory_mm(mm, charged);
+			goto Efault;
+		}
 		*p = charged;
 	}
 
@@ -447,7 +454,7 @@ static unsigned long mremap_to(unsigned long addr, unsigned long old_len,
 		goto out;
 out1:
 	vm_unacct_memory(charged);
-
+	vm_cgroup_uncharge_memory_mm(mm, charged);
 out:
 	return ret;
 }
@@ -578,8 +585,10 @@ SYSCALL_DEFINE5(mremap, unsigned long, addr, unsigned long, old_len,
 		ret = move_vma(vma, addr, old_len, new_len, new_addr, &locked);
 	}
 out:
-	if (ret & ~PAGE_MASK)
+	if (ret & ~PAGE_MASK) {
 		vm_unacct_memory(charged);
+		vm_cgroup_uncharge_memory_mm(mm, charged);
+	}
 	up_write(&current->mm->mmap_sem);
 	if (locked && new_len > old_len)
 		mm_populate(new_addr + old_len, new_len - old_len);

@@ -71,6 +71,7 @@
 #include <linux/signalfd.h>
 #include <linux/uprobes.h>
 #include <linux/aio.h>
+#include <linux/vm_cgroup.h>
 
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -404,8 +405,13 @@ static int dup_mmap(struct mm_struct *mm, struct mm_struct *oldmm)
 		if (mpnt->vm_flags & VM_ACCOUNT) {
 			unsigned long len = vma_pages(mpnt);
 
-			if (security_vm_enough_memory_mm(oldmm, len)) /* sic */
+			if (vm_cgroup_charge_memory_mm(mm, len))
 				goto fail_nomem;
+
+			if (security_vm_enough_memory_mm(oldmm, len)) {
+				vm_cgroup_uncharge_memory_mm(mm, len);
+				goto fail_nomem;
+			}
 			charge = len;
 		}
 		tmp = kmem_cache_alloc(vm_area_cachep, GFP_KERNEL);
@@ -489,6 +495,7 @@ fail_nomem_policy:
 fail_nomem:
 	retval = -ENOMEM;
 	vm_unacct_memory(charge);
+	vm_cgroup_uncharge_memory_mm(mm, charge);
 	goto out;
 }
 
@@ -556,6 +563,7 @@ static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p)
 	if (likely(!mm_alloc_pgd(mm))) {
 		mm->def_flags = 0;
 		mmu_notifier_mm_init(mm);
+		mm_init_vm_cgroup(mm, current);
 		return mm;
 	}
 
@@ -604,6 +612,7 @@ struct mm_struct *mm_alloc(void)
 void __mmdrop(struct mm_struct *mm)
 {
 	BUG_ON(mm == &init_mm);
+	mm_release_vm_cgroup(mm);
 	mm_free_pgd(mm);
 	destroy_context(mm);
 	mmu_notifier_mm_destroy(mm);
@@ -875,6 +884,7 @@ fail_nocontext:
 	 * If init_new_context() failed, we cannot use mmput() to free the mm
 	 * because it calls destroy_context()
 	 */
+	mm_release_vm_cgroup(mm);
 	mm_free_pgd(mm);
 	free_mm(mm);
 	return NULL;
