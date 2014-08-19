@@ -7,6 +7,8 @@
 #include <linux/percpu_counter.h>
 #include <linux/xattr.h>
 
+struct vm_cgroup;
+
 /* inode in-kernel data */
 
 struct shmem_inode_info {
@@ -21,6 +23,10 @@ struct shmem_inode_info {
 	struct list_head	swaplist;	/* chain of maybes on swap */
 	struct simple_xattrs	xattrs;		/* list of xattrs */
 	struct inode		vfs_inode;
+#ifdef CONFIG_CGROUP_VM
+	struct vm_cgroup	*vmcg;		/* vm_cgroup this inode is
+						   accounted to */
+#endif
 };
 
 struct shmem_sb_info {

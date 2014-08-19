@@ -149,6 +149,39 @@ static inline bool percpu_ref_tryget(struct percpu_ref *ref)
 }
 
 /**
+ * percpu_ref_tryget_live - try to increment a live percpu refcount
+ * @ref: percpu_ref to try-get
+ *
+ * Increment a percpu refcount unless it has already been killed.  Returns
+ * %true on success; %false on failure.
+ *
+ * Completion of percpu_ref_kill() in itself doesn't guarantee that tryget
+ * will fail.  For such guarantee, percpu_ref_kill_and_confirm() should be
+ * used.  After the confirm_kill callback is invoked, it's guaranteed that
+ * no new reference will be given out by percpu_ref_tryget().
+ *
+ * The caller is responsible for ensuring that @ref stays accessible.
+ */
+static inline bool percpu_ref_tryget_live(struct percpu_ref *ref)
+{
+       unsigned __percpu *pcpu_count;
+       int ret = false;
+
+       rcu_read_lock_sched();
+
+       pcpu_count = ACCESS_ONCE(ref->pcpu_count);
+
+       if (likely(REF_STATUS(pcpu_count) == PCPU_REF_PTR)) {
+               this_cpu_inc(*pcpu_count);
+               ret = true;
+       }
+
+       rcu_read_unlock_sched();
+
+       return ret;
+}
+
+/**
  * percpu_ref_put - decrement a percpu refcount
  * @ref: percpu_ref to put
  *
