@@ -6109,6 +6109,7 @@ void ata_host_init(struct ata_host *host, struct device *dev,
 {
 	spin_lock_init(&host->lock);
 	mutex_init(&host->eh_mutex);
+	host->n_tags = ATA_MAX_QUEUE - 1;
 	host->dev = dev;
 	host->ops = ops;
 }
@@ -6199,6 +6200,8 @@ int ata_host_register(struct ata_host *host, struct scsi_host_template *sht)
 		WARN_ON(1);
 		return -EINVAL;
 	}
+
+	host->n_tags = clamp(sht->can_queue, 1, ATA_MAX_QUEUE - 1);
 
 	/* host must have been started */
 	if (!(host->flags & ATA_HOST_STARTED)) {
