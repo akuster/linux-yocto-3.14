@@ -23,6 +23,7 @@
 #include <linux/mutex.h>
 #include <linux/perf_event.h>
 #include <linux/slab.h>
+#include <linux/filter.h>
 
 #include "trace.h"
 #include "trace_output.h"
@@ -139,62 +140,6 @@ struct pred_stack {
 	int			index;
 };
 
-#define DEFINE_COMPARISON_PRED(type)					\
-static int filter_pred_##type(struct filter_pred *pred, void *event)	\
-{									\
-	type *addr = (type *)(event + pred->offset);			\
-	type val = (type)pred->val;					\
-	int match = 0;							\
-									\
-	switch (pred->op) {						\
-	case OP_LT:							\
-		match = (*addr < val);					\
-		break;							\
-	case OP_LE:							\
-		match = (*addr <= val);					\
-		break;							\
-	case OP_GT:							\
-		match = (*addr > val);					\
-		break;							\
-	case OP_GE:							\
-		match = (*addr >= val);					\
-		break;							\
-	case OP_BAND:							\
-		match = (*addr & val);					\
-		break;							\
-	default:							\
-		break;							\
-	}								\
-									\
-	return match;							\
-}
-
-#define DEFINE_EQUALITY_PRED(size)					\
-static int filter_pred_##size(struct filter_pred *pred, void *event)	\
-{									\
-	u##size *addr = (u##size *)(event + pred->offset);		\
-	u##size val = (u##size)pred->val;				\
-	int match;							\
-									\
-	match = (val == *addr) ^ pred->not;				\
-									\
-	return match;							\
-}
-
-DEFINE_COMPARISON_PRED(s64);
-DEFINE_COMPARISON_PRED(u64);
-DEFINE_COMPARISON_PRED(s32);
-DEFINE_COMPARISON_PRED(u32);
-DEFINE_COMPARISON_PRED(s16);
-DEFINE_COMPARISON_PRED(u16);
-DEFINE_COMPARISON_PRED(s8);
-DEFINE_COMPARISON_PRED(u8);
-
-DEFINE_EQUALITY_PRED(64);
-DEFINE_EQUALITY_PRED(32);
-DEFINE_EQUALITY_PRED(16);
-DEFINE_EQUALITY_PRED(8);
-
 /* Filter predicate for fixed sized arrays of characters */
 static int filter_pred_string(struct filter_pred *pred, void *event)
 {
@@ -206,6 +151,11 @@ static int filter_pred_string(struct filter_pred *pred, void *event)
 	match = cmp ^ pred->not;
 
 	return match;
+}
+
+static u64 bpf_filter_pred_string(u64 r1, u64 r2, u64 r3, u64 r4, u64 r5)
+{
+	return filter_pred_string((void *) r1, (void *) r2);
 }
 
 /* Filter predicate for char * pointers */
@@ -220,6 +170,11 @@ static int filter_pred_pchar(struct filter_pred *pred, void *event)
 	match = cmp ^ pred->not;
 
 	return match;
+}
+
+static u64 bpf_filter_pred_pchar(u64 r1, u64 r2, u64 r3, u64 r4, u64 r5)
+{
+	return filter_pred_pchar((void *) r1, (void *) r2);
 }
 
 /*
@@ -245,6 +200,11 @@ static int filter_pred_strloc(struct filter_pred *pred, void *event)
 	match = cmp ^ pred->not;
 
 	return match;
+}
+
+static u64 bpf_filter_pred_strloc(u64 r1, u64 r2, u64 r3, u64 r4, u64 r5)
+{
+	return filter_pred_strloc((void *) r1, (void *) r2);
 }
 
 static int filter_pred_none(struct filter_pred *pred, void *event)
@@ -452,120 +412,23 @@ static int walk_pred_tree(struct filter_pred *preds,
 	return 0;
 }
 
-/*
- * A series of AND or ORs where found together. Instead of
- * climbing up and down the tree branches, an array of the
- * ops were made in order of checks. We can just move across
- * the array and short circuit if needed.
- */
-static int process_ops(struct filter_pred *preds,
-		       struct filter_pred *op, void *rec)
-{
-	struct filter_pred *pred;
-	int match = 0;
-	int type;
-	int i;
-
-	/*
-	 * Micro-optimization: We set type to true if op
-	 * is an OR and false otherwise (AND). Then we
-	 * just need to test if the match is equal to
-	 * the type, and if it is, we can short circuit the
-	 * rest of the checks:
-	 *
-	 * if ((match && op->op == OP_OR) ||
-	 *     (!match && op->op == OP_AND))
-	 *	  return match;
-	 */
-	type = op->op == OP_OR;
-
-	for (i = 0; i < op->val; i++) {
-		pred = &preds[op->ops[i]];
-		if (!WARN_ON_ONCE(!pred->fn))
-			match = pred->fn(pred, rec);
-		if (!!match == type)
-			return match;
-	}
-	return match;
-}
-
-struct filter_match_preds_data {
-	struct filter_pred *preds;
-	int match;
-	void *rec;
-};
-
-static int filter_match_preds_cb(enum move_type move, struct filter_pred *pred,
-				 int *err, void *data)
-{
-	struct filter_match_preds_data *d = data;
-
-	*err = 0;
-	switch (move) {
-	case MOVE_DOWN:
-		/* only AND and OR have children */
-		if (pred->left != FILTER_PRED_INVALID) {
-			/* If ops is set, then it was folded. */
-			if (!pred->ops)
-				return WALK_PRED_DEFAULT;
-			/* We can treat folded ops as a leaf node */
-			d->match = process_ops(d->preds, pred, d->rec);
-		} else {
-			if (!WARN_ON_ONCE(!pred->fn))
-				d->match = pred->fn(pred, d->rec);
-		}
-
-		return WALK_PRED_PARENT;
-	case MOVE_UP_FROM_LEFT:
-		/*
-		 * Check for short circuits.
-		 *
-		 * Optimization: !!match == (pred->op == OP_OR)
-		 *   is the same as:
-		 * if ((match && pred->op == OP_OR) ||
-		 *     (!match && pred->op == OP_AND))
-		 */
-		if (!!d->match == (pred->op == OP_OR))
-			return WALK_PRED_PARENT;
-		break;
-	case MOVE_UP_FROM_RIGHT:
-		break;
-	}
-
-	return WALK_PRED_DEFAULT;
-}
-
 /* return 1 if event matches, 0 otherwise (discard) */
 int filter_match_preds(struct event_filter *filter, void *rec)
 {
-	struct filter_pred *preds;
-	struct filter_pred *root;
-	struct filter_match_preds_data data = {
-		/* match is currently meaningless */
-		.match = -1,
-		.rec   = rec,
-	};
-	int n_preds, ret;
+	struct sk_filter *prog;
 
 	/* no filter is considered a match */
 	if (!filter)
 		return 1;
 
-	n_preds = filter->n_preds;
-	if (!n_preds)
+	if (!filter->n_preds)
 		return 1;
 
-	/*
-	 * n_preds, root and filter->preds are protect with preemption disabled.
-	 */
-	root = rcu_dereference_sched(filter->root);
-	if (!root)
+	prog = rcu_dereference_sched(filter->bpf_prog);
+	if (!prog)
 		return 1;
 
-	data.preds = preds = rcu_dereference_sched(filter->preds);
-	ret = walk_pred_tree(preds, root, filter_match_preds_cb, &data);
-	WARN_ON(ret);
-	return data.match;
+	return SK_RUN_FILTER(prog, rec);
 }
 EXPORT_SYMBOL_GPL(filter_match_preds);
 
@@ -762,11 +625,7 @@ static int filter_set_pred(struct event_filter *filter,
 
 static void __free_preds(struct event_filter *filter)
 {
-	int i;
-
 	if (filter->preds) {
-		for (i = 0; i < filter->n_preds; i++)
-			kfree(filter->preds[i].ops);
 		kfree(filter->preds);
 		filter->preds = NULL;
 	}
@@ -794,6 +653,8 @@ static void __free_filter(struct event_filter *filter)
 	if (!filter)
 		return;
 
+	if (filter->bpf_prog)
+		bpf_jit_free(filter->bpf_prog);
 	__free_preds(filter);
 	kfree(filter->filter_string);
 	kfree(filter);
@@ -970,49 +831,6 @@ static int is_legal_op(struct ftrace_event_field *field, int op)
 	return 1;
 }
 
-static filter_pred_fn_t select_comparison_fn(int op, int field_size,
-					     int field_is_signed)
-{
-	filter_pred_fn_t fn = NULL;
-
-	switch (field_size) {
-	case 8:
-		if (op == OP_EQ || op == OP_NE)
-			fn = filter_pred_64;
-		else if (field_is_signed)
-			fn = filter_pred_s64;
-		else
-			fn = filter_pred_u64;
-		break;
-	case 4:
-		if (op == OP_EQ || op == OP_NE)
-			fn = filter_pred_32;
-		else if (field_is_signed)
-			fn = filter_pred_s32;
-		else
-			fn = filter_pred_u32;
-		break;
-	case 2:
-		if (op == OP_EQ || op == OP_NE)
-			fn = filter_pred_16;
-		else if (field_is_signed)
-			fn = filter_pred_s16;
-		else
-			fn = filter_pred_u16;
-		break;
-	case 1:
-		if (op == OP_EQ || op == OP_NE)
-			fn = filter_pred_8;
-		else if (field_is_signed)
-			fn = filter_pred_s8;
-		else
-			fn = filter_pred_u8;
-		break;
-	}
-
-	return fn;
-}
-
 static int init_pred(struct filter_parse_state *ps,
 		     struct ftrace_event_field *field,
 		     struct filter_pred *pred)
@@ -1055,9 +873,8 @@ static int init_pred(struct filter_parse_state *ps,
 		}
 		pred->val = val;
 
-		fn = select_comparison_fn(pred->op, field->size,
-					  field->is_signed);
-		if (!fn) {
+		if (field->size != 1 && field->size != 2 &&
+		    field->size != 4 && field->size != 8) {
 			parse_error(ps, FILT_ERR_INVALID_OP, 0);
 			return -EINVAL;
 		}
@@ -1473,110 +1290,344 @@ static int check_pred_tree(struct event_filter *filter,
 			      check_pred_tree_cb, &data);
 }
 
-static int count_leafs_cb(enum move_type move, struct filter_pred *pred,
-			  int *err, void *data)
-{
-	int *count = data;
+#define MAX_LABELS 1024
+#define MAX_DEPTH 20
+#define _(OP) ({ int ret = OP; if (ret < 0) return ret; ret; })
 
-	if ((move == MOVE_DOWN) &&
-	    (pred->left == FILTER_PRED_INVALID))
-		(*count)++;
-
-	return WALK_PRED_DEFAULT;
-}
-
-static int count_leafs(struct filter_pred *preds, struct filter_pred *root)
-{
-	int count = 0, ret;
-
-	ret = walk_pred_tree(preds, root, count_leafs_cb, &count);
-	WARN_ON(ret);
-	return count;
-}
-
-struct fold_pred_data {
-	struct filter_pred *root;
-	int count;
-	int children;
+struct bpf_gen_context {
+	struct filter_pred *preds;
+	struct sock_filter_int *insns;
+	int *labels;
+	int depth;
+	int insn_cnt;
+	int label_cnt;
 };
 
-static int fold_pred_cb(enum move_type move, struct filter_pred *pred,
-			int *err, void *data)
+static struct filter_pred *get_right(struct filter_pred *pred,
+				     struct filter_pred *preds)
 {
-	struct fold_pred_data *d = data;
-	struct filter_pred *root = d->root;
+	return &preds[pred->right];
+}
 
-	if (move != MOVE_DOWN)
-		return WALK_PRED_DEFAULT;
-	if (pred->left != FILTER_PRED_INVALID)
-		return WALK_PRED_DEFAULT;
+static struct filter_pred *get_left(struct filter_pred *pred,
+				    struct filter_pred *preds)
+{
+	return &preds[pred->left];
+}
 
-	if (WARN_ON(d->count == d->children)) {
-		*err = -EINVAL;
-		return WALK_PRED_ABORT;
+static int emit(struct sock_filter_int insn, struct bpf_gen_context *ctx)
+{
+	if (ctx->insn_cnt >= BPF_MAXINSNS)
+		return -EINVAL;
+
+	ctx->insns[ctx->insn_cnt++] = insn;
+	return 0;
+}
+
+static int emit_cond(struct filter_pred *pred, int *true_label,
+		     int *false_label, struct bpf_gen_context *ctx)
+{
+	int dest_reg, bpf_size, bpf_cond, func;
+	enum filter_op_ids op;
+	u64 addr;
+
+	if (is_function_field(pred->field)) {
+		/* ftrace_profile_set_filter() asks to create a filter,
+		 * but never runs it with filter_match_preds(),
+		 * so just return ok
+		 */
+		return 0;
 	}
 
-	pred->index &= ~FILTER_PRED_FOLD;
-	root->ops[d->count++] = pred->index;
-	return WALK_PRED_DEFAULT;
+	if (is_string_field(pred->field)) {
+		/* generate BPF for matching string fields
+		 * via calls to helper functions
+		 */
+		addr = (unsigned long) pred;
+
+		if ((u32) addr == addr) {
+			/* pred's address fits into 32-bit immediate */
+			_(emit(BPF_ALU64_IMM(BPF_MOV, BPF_REG_1, addr), ctx));
+		} else {
+			/* construct 64-bit address */
+			_(emit(BPF_ALU64_IMM(BPF_MOV, BPF_REG_2, addr >> 32), ctx));
+			_(emit(BPF_ALU64_IMM(BPF_LSH, BPF_REG_2, 32), ctx));
+			_(emit(BPF_ALU32_IMM(BPF_MOV, BPF_REG_1, (u32) addr), ctx));
+			_(emit(BPF_ALU64_REG(BPF_OR, BPF_REG_1, BPF_REG_2), ctx));
+		}
+		_(emit(BPF_ALU64_REG(BPF_MOV, BPF_REG_2, BPF_REG_6), ctx));
+
+		if (pred->field->filter_type == FILTER_STATIC_STRING)
+			func = bpf_filter_pred_string - __bpf_call_base;
+		else if (pred->field->filter_type == FILTER_DYN_STRING)
+			func = bpf_filter_pred_strloc - __bpf_call_base;
+		else
+			func = bpf_filter_pred_pchar - __bpf_call_base;
+
+		_(emit((struct sock_filter_int) {BPF_JMP|BPF_CALL, 0, 0, 0, func}, ctx));
+
+		if (true_label == NULL) {
+			true_label = false_label;
+			false_label = NULL;
+			op = OP_EQ;
+		} else {
+			op = OP_NE;
+		}
+		goto emit_cmp;
+	}
+
+	/* generate BPF for matching integer fields */
+
+	op = pred->op;
+
+	if (true_label == NULL) {
+		true_label = false_label;
+		false_label = NULL;
+
+		/* invert the condition */
+		switch (op) {
+		case OP_EQ:
+			op = OP_NE;
+			break;
+		case OP_NE:
+			op = OP_EQ;
+			break;
+		case OP_GE:
+			op = OP_LT;
+			break;
+		case OP_GT:
+			op = OP_LE;
+			break;
+		case OP_LE:
+			op = OP_GT;
+			break;
+		case OP_LT:
+			op = OP_GE;
+			break;
+		default:
+			return -EINVAL;
+		}
+	}
+
+	if (op == OP_LT || op == OP_LE) {
+		_(emit(BPF_ALU64_IMM(BPF_MOV, BPF_REG_0, pred->val), ctx));
+		dest_reg = BPF_REG_1;
+	} else {
+		dest_reg = BPF_REG_0;
+	}
+
+	bpf_size = _(size_to_bpf(pred->field->size));
+
+	/* dest_reg = *(uint *) (R6 + field->offset) */
+	_(emit(BPF_LDX_MEM(bpf_size, dest_reg, BPF_REG_6, pred->field->offset), ctx));
+
+emit_cmp:
+	switch (op) {
+	case OP_LT:
+		bpf_cond = pred->field->is_signed ? BPF_JSGT : BPF_JGT;
+		goto emit_jmp_inv;
+	case OP_LE:
+		bpf_cond = pred->field->is_signed ? BPF_JSGE : BPF_JGE;
+emit_jmp_inv:
+		_(emit(BPF_JMP_REG(bpf_cond, BPF_REG_0, BPF_REG_1, *true_label), ctx));
+		break;
+	case OP_GE:
+		bpf_cond = pred->field->is_signed ? BPF_JSGE : BPF_JGE;
+		goto emit_jmp;
+	case OP_GT:
+		bpf_cond = pred->field->is_signed ? BPF_JSGT : BPF_JGT;
+		goto emit_jmp;
+	case OP_EQ:
+		bpf_cond = BPF_JEQ;
+		goto emit_jmp;
+	case OP_NE:
+		bpf_cond = BPF_JNE;
+		goto emit_jmp;
+	case OP_BAND:
+		bpf_cond = BPF_JSET;
+emit_jmp:
+		_(emit(BPF_JMP_IMM(bpf_cond, BPF_REG_0, pred->val, *true_label), ctx));
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	if (false_label)
+		_(emit(BPF_JMP_IMM(BPF_JA, 0, 0, *false_label), ctx));
+
+	return 0;
 }
 
-static int fold_pred(struct filter_pred *preds, struct filter_pred *root)
+static int emit_label(int label, struct bpf_gen_context *ctx)
 {
-	struct fold_pred_data data = {
-		.root  = root,
-		.count = 0,
-	};
-	int children;
+	if (label >= MAX_LABELS)
+		return -EINVAL;
 
-	/* No need to keep the fold flag */
-	root->index &= ~FILTER_PRED_FOLD;
-
-	/* If the root is a leaf then do nothing */
-	if (root->left == FILTER_PRED_INVALID)
-		return 0;
-
-	/* count the children */
-	children = count_leafs(preds, &preds[root->left]);
-	children += count_leafs(preds, &preds[root->right]);
-
-	root->ops = kcalloc(children, sizeof(*root->ops), GFP_KERNEL);
-	if (!root->ops)
-		return -ENOMEM;
-
-	root->val = children;
-	data.children = children;
-	return walk_pred_tree(preds, root, fold_pred_cb, &data);
+	ctx->labels[label] = ctx->insn_cnt;
+	return 0;
 }
 
-static int fold_pred_tree_cb(enum move_type move, struct filter_pred *pred,
-			     int *err, void *data)
+/* recursive algorithm to convert boolean and/or conditions into 'gotos' */
+static int conv_cond_expr_r(struct filter_pred *pred, int *true_label,
+			    int *false_label, struct bpf_gen_context *ctx)
 {
-	struct filter_pred *preds = data;
+	int local_label = 0;
 
-	if (move != MOVE_DOWN)
-		return WALK_PRED_DEFAULT;
-	if (!(pred->index & FILTER_PRED_FOLD))
-		return WALK_PRED_DEFAULT;
+	/*
+	 * this function is recursive and uses ~48 bytes of stack on x64
+	 * so max stack usage is 48*20 ~ 1k
+	 */
+	if (ctx->depth++ > MAX_DEPTH)
+		return -EINVAL;
 
-	*err = fold_pred(preds, pred);
-	if (*err)
-		return WALK_PRED_ABORT;
+	if (pred->op == OP_AND) {
+		/*
+		 * Turn if (a && b) into
+		 *
+		 * if (a); else goto no;
+		 * if (b) goto yes; else goto no;
+		 * (no:)
+		 */
+		if (false_label == NULL)
+			false_label = &local_label;
 
-	/* eveyrhing below is folded, continue with parent */
-	return WALK_PRED_PARENT;
+		_(conv_cond_expr_r(get_left(pred, ctx->preds),
+				   NULL, false_label, ctx));
+
+		_(conv_cond_expr_r(get_right(pred, ctx->preds),
+				   true_label, false_label, ctx));
+	} else if (pred->op == OP_OR) {
+		/*
+		 * Turn if (a || b) into
+		 *
+		 * if (a) goto yes;
+		 * if (b) goto yes; else goto no;
+		 * (yes:)
+		 */
+		if (true_label == NULL)
+			true_label = &local_label;
+
+		_(conv_cond_expr_r(get_left(pred, ctx->preds),
+				   true_label, NULL, ctx));
+
+		_(conv_cond_expr_r(get_right(pred, ctx->preds),
+				   true_label, false_label, ctx));
+	} else {
+		if (true_label != NULL && *true_label == 0)
+			*true_label = ctx->label_cnt++;
+
+		if (false_label != NULL && *false_label == 0)
+			*false_label = ctx->label_cnt++;
+
+		_(emit_cond(pred, true_label, false_label, ctx));
+	}
+
+	if (local_label)
+		_(emit_label(local_label, ctx));
+
+	ctx->depth--;
+	return 0;
+}
+
+/**
+ * conv_cond_expr - converts pred tree into BPF program
+ *
+ * convert 'a == 1 || b == 2' into:
+ * r6 = r1
+ * r0 = *(u8 *)(r6 +0)
+ * if r0 == 0x1 goto pc+3
+ * r0 = *(u8 *)(r6 +1)
+ * if r0 == 0x2 goto pc+1
+ * goto pc+2
+ * r0 = 1
+ * exit
+ * r0 = 0
+ * exit
+ */
+static int conv_cond_expr(struct filter_pred *pred, struct bpf_gen_context *ctx)
+{
+	int true_label = 0;
+	int false_label = 0;
+
+	_(conv_cond_expr_r(pred, &true_label, &false_label, ctx));
+
+	_(emit_label(true_label, ctx));
+	_(emit(BPF_ALU64_IMM(BPF_MOV, BPF_REG_0, 1), ctx));
+	_(emit(BPF_EXIT_INSN(), ctx));
+
+	_(emit_label(false_label, ctx));
+	_(emit(BPF_ALU64_IMM(BPF_MOV, BPF_REG_0, 0), ctx));
+	_(emit(BPF_EXIT_INSN(), ctx));
+
+	return 0;
 }
 
 /*
- * To optimize the processing of the ops, if we have several "ors" or
- * "ands" together, we can put them in an array and process them all
- * together speeding up the filter logic.
+ * BPF program was generated with 'off' field of JMP instructions
+ * pointing to 'labels'. Fix them up by making them relative jumps
  */
-static int fold_pred_tree(struct event_filter *filter,
-			   struct filter_pred *root)
+static void fixup_jumps(struct bpf_gen_context *ctx)
 {
-	return walk_pred_tree(filter->preds, root, fold_pred_tree_cb,
-			      filter->preds);
+	struct sock_filter_int *insn;
+	int i;
+
+	for (i = 0; i < ctx->insn_cnt; i++) {
+		insn = ctx->insns + i;
+		if (BPF_CLASS(insn->code) == BPF_JMP &&
+		    BPF_OP(insn->code) != BPF_EXIT) {
+			insn->off = ctx->labels[insn->off] - i - 1;
+		}
+	}
+}
+
+static int filter_gen_bpf(struct event_filter *filter)
+{
+	struct bpf_gen_context ctx = {};
+	struct sk_filter *bpf_prog;
+	int err;
+
+	ctx.preds = filter->preds;
+	ctx.label_cnt = 1;
+	ctx.insns = kmalloc(sizeof(*ctx.insns) * BPF_MAXINSNS, GFP_KERNEL);
+	if (!ctx.insns)
+		return -ENOMEM;
+
+	err = -ENOMEM;
+	ctx.labels = kmalloc(sizeof(*ctx.labels) * MAX_LABELS, GFP_KERNEL);
+	if (!ctx.labels)
+		goto free_insns;
+
+	/* save arg1 into first callee saved register R6 */
+	err = emit(BPF_ALU64_REG(BPF_MOV, BPF_REG_6, BPF_REG_1), &ctx);
+	BUG_ON(err < 0);
+
+	err = conv_cond_expr(filter->root, &ctx);
+	if (err < 0)
+		goto free_labels;
+
+	fixup_jumps(&ctx);
+
+	err = -ENOMEM;
+	bpf_prog = kzalloc(sk_filter_size(ctx.insn_cnt), GFP_KERNEL);
+	if (!bpf_prog)
+		goto free_labels;
+
+	memcpy(bpf_prog->insnsi, ctx.insns,
+	       sizeof(struct sock_filter_int) * ctx.insn_cnt);
+	bpf_prog->len = ctx.insn_cnt;
+	bpf_prog->bpf_func = sk_run_filter_int_skb;
+	filter->bpf_prog = bpf_prog;
+
+	/* if JIT compiler is available, use it */
+	bpf_int_jit_compile(bpf_prog);
+
+	err = 0;
+
+free_labels:
+	kfree(ctx.labels);
+free_insns:
+	kfree(ctx.insns);
+	return err;
 }
 
 static int replace_preds(struct ftrace_event_call *call,
@@ -1666,14 +1717,17 @@ static int replace_preds(struct ftrace_event_call *call,
 		if (err)
 			goto fail;
 
-		/* Optimize the tree */
-		err = fold_pred_tree(filter, root);
-		if (err)
-			goto fail;
-
 		/* We don't set root until we know it works */
 		barrier();
 		filter->root = root;
+
+		/* convert predicate tree into BPF program */
+		err = filter_gen_bpf(filter);
+		if (err) {
+			parse_error(ps, FILT_ERR_TOO_MANY_PREDS, 0);
+			err = -ENOSPC;
+			goto fail;
+		}
 	}
 
 	err = 0;
