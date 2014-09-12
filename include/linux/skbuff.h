@@ -392,11 +392,11 @@ typedef unsigned char *sk_buff_data_t;
  *	@skb_iif: ifindex of device we arrived on
  *	@tc_index: Traffic control index
  *	@tc_verd: traffic control verdict
- *	@hash: the packet hash
+ *	@rxhash: the packet hash computed on receive
  *	@queue_mapping: Queue mapping for multiqueue devices
  *	@ndisc_nodetype: router type (from link layer)
  *	@ooo_okay: allow the mapping of a socket to a queue to be changed
- *	@l4_hash: indicate hash is a canonical 4-tuple hash over transport
+ *	@l4_rxhash: indicate rxhash is a canonical 4-tuple hash over transport
  *		ports.
  *	@wifi_acked_valid: wifi_acked was set
  *	@wifi_acked: whether frame was acked on wifi or not
@@ -482,7 +482,7 @@ struct sk_buff {
 
 	int			skb_iif;
 
-	__u32			hash;
+	__u32			rxhash;
 
 	__be16			vlan_proto;
 	__u16			vlan_tci;
@@ -501,7 +501,7 @@ struct sk_buff {
 #endif
 	__u8			pfmemalloc:1;
 	__u8			ooo_okay:1;
-	__u8			l4_hash:1;
+	__u8			l4_rxhash:1;
 	__u8			wifi_acked_valid:1;
 	__u8			wifi_acked:1;
 	__u8			no_fcs:1;
@@ -758,40 +758,40 @@ enum pkt_hash_types {
 static inline void
 skb_set_hash(struct sk_buff *skb, __u32 hash, enum pkt_hash_types type)
 {
-	skb->l4_hash = (type == PKT_HASH_TYPE_L4);
-	skb->hash = hash;
+	skb->l4_rxhash = (type == PKT_HASH_TYPE_L4);
+	skb->rxhash = hash;
 }
 
 void __skb_get_hash(struct sk_buff *skb);
 static inline __u32 skb_get_hash(struct sk_buff *skb)
 {
-	if (!skb->l4_hash)
+	if (!skb->l4_rxhash)
 		__skb_get_hash(skb);
 
-	return skb->hash;
+	return skb->rxhash;
 }
 
 static inline __u32 skb_get_hash_raw(const struct sk_buff *skb)
 {
-	return skb->hash;
+	return skb->rxhash;
 }
 
 static inline void skb_clear_hash(struct sk_buff *skb)
 {
-	skb->hash = 0;
-	skb->l4_hash = 0;
+	skb->rxhash = 0;
+	skb->l4_rxhash = 0;
 }
 
 static inline void skb_clear_hash_if_not_l4(struct sk_buff *skb)
 {
-	if (!skb->l4_hash)
+	if (!skb->l4_rxhash)
 		skb_clear_hash(skb);
 }
 
 static inline void skb_copy_hash(struct sk_buff *to, const struct sk_buff *from)
 {
-	to->hash = from->hash;
-	to->l4_hash = from->l4_hash;
+	to->rxhash = from->rxhash;
+	to->l4_rxhash = from->l4_rxhash;
 };
 
 #ifdef NET_SKBUFF_DATA_USES_OFFSET

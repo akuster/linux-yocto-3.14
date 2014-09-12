@@ -729,10 +729,10 @@ static bool convert_bpf_extensions(struct sock_filter *fp,
 		break;
 
 	case SKF_AD_OFF + SKF_AD_RXHASH:
-		BUILD_BUG_ON(FIELD_SIZEOF(struct sk_buff, hash) != 4);
+		BUILD_BUG_ON(FIELD_SIZEOF(struct sk_buff, rxhash) != 4);
 
 		*insn = BPF_LDX_MEM(BPF_W, BPF_REG_A, BPF_REG_CTX,
-				    offsetof(struct sk_buff, hash));
+				    offsetof(struct sk_buff, rxhash));
 		break;
 
 	case SKF_AD_OFF + SKF_AD_QUEUE:
