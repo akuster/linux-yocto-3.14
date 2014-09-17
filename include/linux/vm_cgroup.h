@@ -66,6 +66,7 @@ static inline void shmem_release_vm_cgroup(struct shmem_inode_info *info)
 static inline int vm_cgroup_charge_shmem(struct shmem_inode_info *info,
 					 unsigned long nr_pages)
 {
+	return 0;
 }
 
 static inline void vm_cgroup_uncharge_shmem(struct shmem_inode_info *info,
