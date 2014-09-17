@@ -58,4 +58,3 @@ module_init(cpu_feature_match_ ## x ## _init)
 
 #endif
 #endif
-
