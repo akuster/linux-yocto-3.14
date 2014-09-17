@@ -285,11 +285,12 @@ static void cpu_device_release(struct device *dev)
 	 * on the linux-kernel list, you have been warned.
 	 */
 }
-
+ 
+#ifdef CONFIG_HAVE_CPU_AUTOPROBE
 #ifdef CONFIG_GENERIC_CPU_AUTOPROBE
-static ssize_t print_cpu_modalias(struct device *dev, 
-		                 struct device_attribute *attr, 
-				 char *buf)
+static ssize_t print_cpu_modalias(struct device *dev,
+				  struct device_attribute *attr,
+				  char *buf)
 {
 	ssize_t n;
 	u32 i;
@@ -308,6 +309,9 @@ static ssize_t print_cpu_modalias(struct device *dev,
 	buf[n++] = '\n';
 	return n;
 }
+#else
+#define print_cpu_modalias	arch_print_cpu_modalias
+#endif
 
 static int cpu_uevent(struct device *dev, struct kobj_uevent_env *env)
 {
