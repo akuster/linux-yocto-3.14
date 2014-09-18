@@ -186,7 +186,7 @@ config GENERIC_CPU_DEVICES
 	default n
 
 config GENERIC_CPU_AUTOPROBE
-        bool
+	bool
 
 config SOC_BUS
 	bool
