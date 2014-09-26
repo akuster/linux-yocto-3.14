@@ -941,15 +941,12 @@ struct ftrace_event_field {
 	int			is_signed;
 };
 
-struct sk_filter;
-
 struct event_filter {
 	int			n_preds;	/* Number assigned */
 	int			a_preds;	/* allocated */
 	struct filter_pred	*preds;
 	struct filter_pred	*root;
 	char			*filter_string;
-	struct sk_filter	*bpf_prog;
 };
 
 struct event_subsystem {
@@ -1006,6 +1003,7 @@ struct filter_pred {
 	filter_pred_fn_t 	fn;
 	u64 			val;
 	struct regex		regex;
+	unsigned short		*ops;
 	struct ftrace_event_field *field;
 	int 			offset;
 	int 			not;
