@@ -1,7 +1,7 @@
 /*
  * Driver for /dev/crypto device (aka CryptoDev)
  *
- * Copyright (c) 2009-2011 Nikos Mavrogiannopoulos <nmav@gnutls.org>
+ * Copyright (c) 2009-2013 Nikos Mavrogiannopoulos <nmav@gnutls.org>
  * Copyright (c) 2010 Phil Sutter
  * Copyright (c) 2011, 2012 OpenSSL Software Foundation, Inc.
  *
@@ -80,7 +80,7 @@ int __get_userbuf(uint8_t __user *addr, uint32_t len, int write,
 	return 0;
 }
 
-int adjust_sg_array(struct csession * ses, int pagecount)
+int adjust_sg_array(struct csession *ses, int pagecount)
 {
 	struct scatterlist *sg;
 	struct page **pages;
@@ -89,7 +89,7 @@ int adjust_sg_array(struct csession * ses, int pagecount)
 	for (array_size = ses->array_size; array_size < pagecount;
 	     array_size *= 2)
 		;
-	dprintk(0, KERN_DEBUG, "reallocating from %d to %d pages\n",
+	ddebug(0, "reallocating from %d to %d pages",
 			ses->array_size, array_size);
 	pages = krealloc(ses->pages, array_size * sizeof(struct page *),
 			 GFP_KERNEL);
@@ -110,7 +110,7 @@ void release_user_pages(struct csession *ses)
 {
 	unsigned int i;
 
-	for (i=0;i<ses->used_pages;i++) {
+	for (i = 0; i < ses->used_pages; i++) {
 		if (!PageReserved(ses->pages[i]))
 			SetPageDirty(ses->pages[i]);
 
@@ -128,8 +128,8 @@ void release_user_pages(struct csession *ses)
  * dst might be the same as src.
  */
 int get_userbuf(struct csession *ses,
-                void* __user src, unsigned int src_len,
-                void* __user dst, unsigned int dst_len,
+                void *__user src, unsigned int src_len,
+                void *__user dst, unsigned int dst_len,
                 struct task_struct *task, struct mm_struct *mm,
                 struct scatterlist **src_sg,
                 struct scatterlist **dst_sg)
@@ -147,16 +147,6 @@ int get_userbuf(struct csession *ses,
 	if (!dst && dst_len)
 		dst_len = 0;
 
-	if (ses->alignmask && !IS_ALIGNED((unsigned long)src, ses->alignmask)) {
-		dprintk(2, KERN_WARNING, "careful - source address %lx is not %d byte aligned\n",
-				(unsigned long)src, ses->alignmask + 1);
-	}
-
-	if (ses->alignmask && !IS_ALIGNED((unsigned long)dst, ses->alignmask)) {
-		dprintk(2, KERN_WARNING, "careful - destination address %lx is not %d byte aligned\n",
-				(unsigned long)dst, ses->alignmask + 1);
-	}
-
 	src_pagecount = PAGECOUNT(src, src_len);
 	dst_pagecount = PAGECOUNT(dst, dst_len);
 
@@ -172,32 +162,34 @@ int get_userbuf(struct csession *ses,
 	}
 
 	if (src == dst) {	/* inplace operation */
+		/* When we encrypt for authenc modes we need to write
+		 * more data than the ones we read. */
+		if (src_len < dst_len)
+			src_len = dst_len;
 		rc = __get_userbuf(src, src_len, 1, ses->used_pages,
 			               ses->pages, ses->sg, task, mm);
 		if (unlikely(rc)) {
-			dprintk(1, KERN_ERR,
-				"failed to get user pages for data IO\n");
+			derr(1, "failed to get user pages for data IO");
 			return rc;
 		}
 		(*src_sg) = (*dst_sg) = ses->sg;
 		return 0;
 	}
 
-	*src_sg = NULL; // default to no input
-	*dst_sg = NULL; // default to ignore output
+	*src_sg = NULL; /* default to no input */
+	*dst_sg = NULL; /* default to ignore output */
 
-	if(likely(src)) {
+	if (likely(src)) {
 		rc = __get_userbuf(src, src_len, 0, ses->readonly_pages,
 					   ses->pages, ses->sg, task, mm);
 		if (unlikely(rc)) {
-			dprintk(1, KERN_ERR,
-				"failed to get user pages for data input\n");
+			derr(1, "failed to get user pages for data input");
 			return rc;
 		}
 		*src_sg = ses->sg;
 	}
 
-	if(likely(dst)) {
+	if (likely(dst)) {
 		const unsigned int writable_pages =
 			ses->used_pages - ses->readonly_pages;
 		struct page **dst_pages = ses->pages + ses->readonly_pages;
@@ -206,8 +198,7 @@ int get_userbuf(struct csession *ses,
 		rc = __get_userbuf(dst, dst_len, 1, writable_pages,
 					   dst_pages, *dst_sg, task, mm);
 		if (unlikely(rc)) {
-			dprintk(1, KERN_ERR,
-					"failed to get user pages for data output\n");
+			derr(1, "failed to get user pages for data output");
 			release_user_pages(ses);  /* FIXME: use __release_userbuf(src, ...) */
 			return rc;
 		}
