@@ -25,6 +25,9 @@ struct cipher_data {
 int cryptodev_cipher_init(struct cipher_data *out, const char *alg_name,
 			  uint8_t *key, size_t keylen, int stream, int aead);
 void cryptodev_cipher_deinit(struct cipher_data *cdata);
+int cryptodev_get_cipher_key(uint8_t *key, struct session_op *sop, int aead);
+int cryptodev_get_cipher_keylen(unsigned int *keylen, struct session_op *sop,
+		int aead);
 ssize_t cryptodev_cipher_decrypt(struct cipher_data *cdata,
 			const struct scatterlist *sg1,
 			struct scatterlist *sg2, size_t len);
@@ -33,20 +36,20 @@ ssize_t cryptodev_cipher_encrypt(struct cipher_data *cdata,
 				struct scatterlist *sg2, size_t len);
 
 /* AEAD */
-inline static void cryptodev_cipher_auth(struct cipher_data *cdata,
+static inline void cryptodev_cipher_auth(struct cipher_data *cdata,
 					 struct scatterlist *sg1, size_t len)
 {
 	/* for some reason we _have_ to call that even for zero length sgs */
 	aead_request_set_assoc(cdata->async.arequest, len ? sg1 : NULL, len);
 }
 
-inline static void cryptodev_cipher_set_tag_size(struct cipher_data *cdata, int size)
+static inline void cryptodev_cipher_set_tag_size(struct cipher_data *cdata, int size)
 {
 	if (likely(cdata->aead != 0))
 		crypto_aead_setauthsize(cdata->async.as, size);
 }
 
-inline static int cryptodev_cipher_get_tag_size(struct cipher_data *cdata)
+static inline int cryptodev_cipher_get_tag_size(struct cipher_data *cdata)
 {
 	if (likely(cdata->init && cdata->aead != 0))
 		return crypto_aead_authsize(cdata->async.as);
@@ -54,13 +57,13 @@ inline static int cryptodev_cipher_get_tag_size(struct cipher_data *cdata)
 		return 0;
 }
 
-inline static void cryptodev_cipher_set_iv(struct cipher_data *cdata,
+static inline void cryptodev_cipher_set_iv(struct cipher_data *cdata,
 				void *iv, size_t iv_size)
 {
 	memcpy(cdata->async.iv, iv, min(iv_size, sizeof(cdata->async.iv)));
 }
 
-inline static void cryptodev_cipher_get_iv(struct cipher_data *cdata,
+static inline void cryptodev_cipher_get_iv(struct cipher_data *cdata,
 				void *iv, size_t iv_size)
 {
 	memcpy(iv, cdata->async.iv, min(iv_size, sizeof(cdata->async.iv)));
