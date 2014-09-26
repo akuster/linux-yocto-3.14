@@ -2,6 +2,12 @@
 #ifndef CRYPTODEV_INT_H
 # define CRYPTODEV_INT_H
 
+#include <linux/version.h>
+
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(3, 13, 0))
+#  define reinit_completion(x) INIT_COMPLETION(*(x))
+#endif
+
 #include <linux/init.h>
 #include <linux/sched.h>
 #include <linux/fs.h>
@@ -18,11 +24,16 @@
 #define dprintk(level, severity, format, a...)			\
 	do {							\
 		if (level <= cryptodev_verbosity)		\
-			printk(severity PFX "%s[%u] (%s:%u): " format,	\
+			printk(severity PFX "%s[%u] (%s:%u): " format "\n",	\
 			       current->comm, current->pid,	\
 			       __func__, __LINE__,		\
 			       ##a);				\
 	} while (0)
+#define derr(level, format, a...) dprintk(level, KERN_ERR, format, ##a)
+#define dwarning(level, format, a...) dprintk(level, KERN_WARNING, format, ##a)
+#define dinfo(level, format, a...) dprintk(level, KERN_INFO, format, ##a)
+#define ddebug(level, format, a...) dprintk(level, KERN_DEBUG, format, ##a)
+
 
 extern int cryptodev_verbosity;
 
@@ -51,7 +62,7 @@ struct compat_session_op {
 };
 
 /* input of CIOCCRYPT */
- struct compat_crypt_op {
+struct compat_crypt_op {
 	uint32_t	ses;		/* session identifier */
 	uint16_t	op;		/* COP_ENCRYPT or COP_DECRYPT */
 	uint16_t	flags;		/* see COP_FLAG_* */
@@ -125,10 +136,10 @@ struct csession {
 
 struct csession *crypto_get_session_by_sid(struct fcrypt *fcr, uint32_t sid);
 
-inline static void crypto_put_session(struct csession * ses_ptr)
+static inline void crypto_put_session(struct csession *ses_ptr)
 {
 	mutex_unlock(&ses_ptr->sem);
 }
-int adjust_sg_array(struct csession * ses, int pagecount);
+int adjust_sg_array(struct csession *ses, int pagecount);
 
 #endif /* CRYPTODEV_INT_H */
