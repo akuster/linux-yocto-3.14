@@ -79,7 +79,6 @@ config FTRACE_NMI_ENTER
        default y
 
 config EVENT_TRACING
-	depends on NET
 	select CONTEXT_SWITCH_TRACER
 	bool
 
