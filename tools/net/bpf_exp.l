@@ -92,7 +92,6 @@ extern void yyerror(const char *str);
 "#"?("cpu")	{ return K_CPU; }
 "#"?("vlan_tci") { return K_VLANT; }
 "#"?("vlan_pr")	{ return K_VLANP; }
-"#"?("rand")	{ return K_RAND; }
 
 ":"		{ return ':'; }
 ","		{ return ','; }
