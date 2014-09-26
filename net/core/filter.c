@@ -336,7 +336,7 @@ load_b:
 			A = skb->dev->type;
 			continue;
 		case BPF_S_ANC_RXHASH:
-			A = skb->hash;
+			A = skb->rxhash;
 			continue;
 		case BPF_S_ANC_CPU:
 			A = raw_smp_processor_id();
