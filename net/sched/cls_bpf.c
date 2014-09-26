@@ -156,7 +156,7 @@ static void cls_bpf_put(struct tcf_proto *tp, unsigned long f)
 static int cls_bpf_modify_existing(struct net *net, struct tcf_proto *tp,
 				   struct cls_bpf_prog *prog,
 				   unsigned long base, struct nlattr **tb,
-				   struct nlattr *est, bool ovr)
+				   struct nlattr *est)
 {
 	struct sock_filter *bpf_ops, *bpf_old;
 	struct tcf_exts exts;
@@ -170,7 +170,7 @@ static int cls_bpf_modify_existing(struct net *net, struct tcf_proto *tp,
 		return -EINVAL;
 
 	tcf_exts_init(&exts, TCA_BPF_ACT, TCA_BPF_POLICE);
-	ret = tcf_exts_validate(net, tp, tb, est, &exts, ovr);
+	ret = tcf_exts_validate(net, tp, tb, est, &exts);
 	if (ret < 0)
 		return ret;
 
@@ -242,7 +242,7 @@ static u32 cls_bpf_grab_new_handle(struct tcf_proto *tp,
 static int cls_bpf_change(struct net *net, struct sk_buff *in_skb,
 			  struct tcf_proto *tp, unsigned long base,
 			  u32 handle, struct nlattr **tca,
-			  unsigned long *arg, bool ovr)
+			  unsigned long *arg)
 {
 	struct cls_bpf_head *head = tp->root;
 	struct cls_bpf_prog *prog = (struct cls_bpf_prog *) *arg;
@@ -260,7 +260,7 @@ static int cls_bpf_change(struct net *net, struct sk_buff *in_skb,
 		if (handle && prog->handle != handle)
 			return -EINVAL;
 		return cls_bpf_modify_existing(net, tp, prog, base, tb,
-					       tca[TCA_RATE], ovr);
+					       tca[TCA_RATE]);
 	}
 
 	prog = kzalloc(sizeof(*prog), GFP_KERNEL);
@@ -277,7 +277,7 @@ static int cls_bpf_change(struct net *net, struct sk_buff *in_skb,
 		goto errout;
 	}
 
-	ret = cls_bpf_modify_existing(net, tp, prog, base, tb, tca[TCA_RATE], ovr);
+	ret = cls_bpf_modify_existing(net, tp, prog, base, tb, tca[TCA_RATE]);
 	if (ret < 0)
 		goto errout;
 
