@@ -876,7 +876,6 @@ void bpf_jit_compile(struct sk_filter *fp)
 	if (jit.start) {
 		set_memory_ro((unsigned long)header, header->pages);
 		fp->bpf_func = (void *) jit.start;
-		fp->jited = 1;
 	}
 out:
 	kfree(addrs);
@@ -887,12 +886,10 @@ void bpf_jit_free(struct sk_filter *fp)
 	unsigned long addr = (unsigned long)fp->bpf_func & PAGE_MASK;
 	struct bpf_binary_header *header = (void *)addr;
 
-	if (!fp->jited)
+	if (fp->bpf_func == sk_run_filter)
 		goto free_filter;
-
 	set_memory_rw(addr, header->pages);
 	module_free(NULL, header);
-
 free_filter:
 	kfree(fp);
 }
