@@ -45,6 +45,11 @@
 #include <linux/uaccess.h>
 #include <crypto/cryptodev.h>
 #include <linux/scatterlist.h>
+#include <linux/rtnetlink.h>
+#include <crypto/authenc.h>
+
+#include <linux/sysctl.h>
+
 #include "cryptodev_int.h"
 #include "zc.h"
 #include "version.h"
@@ -106,10 +111,21 @@ crypto_create_session(struct fcrypt *fcr, struct session_op *sop)
 	const char *alg_name = NULL;
 	const char *hash_name = NULL;
 	int hmac_mode = 1, stream = 0, aead = 0;
+	/*
+	 * With composite aead ciphers, only ckey is used and it can cover all the
+	 * structure space; otherwise both keys may be used simultaneously but they
+	 * are confined to their spaces
+	 */
+	struct {
+		uint8_t ckey[CRYPTO_CIPHER_MAX_KEY_LEN];
+		uint8_t mkey[CRYPTO_HMAC_MAX_KEY_LEN];
+		/* padding space for aead keys */
+		uint8_t pad[RTA_SPACE(sizeof(struct crypto_authenc_key_param))];
+	} keys;
 
 	/* Does the request make sense? */
 	if (unlikely(!sop->cipher && !sop->mac)) {
-		dprintk(1, KERN_DEBUG, "Both 'cipher' and 'mac' unset.\n");
+		ddebug(1, "Both 'cipher' and 'mac' unset.");
 		return -EINVAL;
 	}
 
@@ -148,7 +164,7 @@ crypto_create_session(struct fcrypt *fcr, struct session_op *sop)
 		stream = 1;
 		break;
 	default:
-		dprintk(1, KERN_DEBUG, "bad cipher: %d\n", sop->cipher);
+		ddebug(1, "bad cipher: %d", sop->cipher);
 		return -EINVAL;
 	}
 
@@ -208,7 +224,7 @@ crypto_create_session(struct fcrypt *fcr, struct session_op *sop)
 		hmac_mode = 0;
 		break;
 	default:
-		dprintk(1, KERN_DEBUG, "bad mac: %d\n", sop->mac);
+		ddebug(1, "bad mac: %d", sop->mac);
 		return -EINVAL;
 	}
 
@@ -219,52 +235,45 @@ crypto_create_session(struct fcrypt *fcr, struct session_op *sop)
 
 	/* Set-up crypto transform. */
 	if (alg_name) {
-		uint8_t keyp[CRYPTO_CIPHER_MAX_KEY_LEN];
-
-		if (unlikely(sop->keylen > CRYPTO_CIPHER_MAX_KEY_LEN)) {
-			dprintk(1, KERN_DEBUG,
-				"Setting key failed for %s-%zu.\n",
+		unsigned int keylen;
+		ret = cryptodev_get_cipher_keylen(&keylen, sop, aead);
+		if (unlikely(ret < 0)) {
+			ddebug(1, "Setting key failed for %s-%zu.",
 				alg_name, (size_t)sop->keylen*8);
-			ret = -EINVAL;
 			goto error_cipher;
 		}
 
-		if (unlikely(copy_from_user(keyp, sop->key, sop->keylen))) {
-			ret = -EFAULT;
+		ret = cryptodev_get_cipher_key(keys.ckey, sop, aead);
+		if (unlikely(ret < 0))
 			goto error_cipher;
-		}
 
-		ret = cryptodev_cipher_init(&ses_new->cdata, alg_name, keyp,
-						sop->keylen, stream, aead);
+		ret = cryptodev_cipher_init(&ses_new->cdata, alg_name, keys.ckey,
+						keylen, stream, aead);
 		if (ret < 0) {
-			dprintk(1, KERN_DEBUG,
-				"Failed to load cipher for %s\n", alg_name);
+			ddebug(1, "Failed to load cipher for %s", alg_name);
 			ret = -EINVAL;
 			goto error_cipher;
 		}
 	}
 
 	if (hash_name && aead == 0) {
-		uint8_t keyp[CRYPTO_HMAC_MAX_KEY_LEN];
-
 		if (unlikely(sop->mackeylen > CRYPTO_HMAC_MAX_KEY_LEN)) {
-			dprintk(1, KERN_DEBUG,
-				"Setting key failed for %s-%zu.\n",
-				alg_name, (size_t)sop->mackeylen*8);
+			ddebug(1, "Setting key failed for %s-%zu.",
+				hash_name, (size_t)sop->mackeylen*8);
 			ret = -EINVAL;
 			goto error_hash;
 		}
 
-		if (sop->mackey && unlikely(copy_from_user(keyp, sop->mackey,
+		if (sop->mackey && unlikely(copy_from_user(keys.mkey, sop->mackey,
 					    sop->mackeylen))) {
 			ret = -EFAULT;
 			goto error_hash;
 		}
 
 		ret = cryptodev_hash_init(&ses_new->hdata, hash_name, hmac_mode,
-							keyp, sop->mackeylen);
+							keys.mkey, sop->mackeylen);
 		if (ret != 0) {
-			dprintk(1, KERN_DEBUG, "Failed to load hash for %s\n", hash_name);
+			ddebug(1, "Failed to load hash for %s", hash_name);
 			ret = -EINVAL;
 			goto error_hash;
 		}
@@ -272,17 +281,16 @@ crypto_create_session(struct fcrypt *fcr, struct session_op *sop)
 
 	ses_new->alignmask = max(ses_new->cdata.alignmask,
 	                                          ses_new->hdata.alignmask);
-	dprintk(2, KERN_DEBUG, "got alignmask %d\n", ses_new->alignmask);
+	ddebug(2, "got alignmask %d", ses_new->alignmask);
 
 	ses_new->array_size = DEFAULT_PREALLOC_PAGES;
-	dprintk(2, KERN_DEBUG, "preallocating for %d user pages\n",
-			ses_new->array_size);
+	ddebug(2, "preallocating for %d user pages", ses_new->array_size);
 	ses_new->pages = kzalloc(ses_new->array_size *
 			sizeof(struct page *), GFP_KERNEL);
 	ses_new->sg = kzalloc(ses_new->array_size *
 			sizeof(struct scatterlist), GFP_KERNEL);
 	if (ses_new->sg == NULL || ses_new->pages == NULL) {
-		dprintk(0, KERN_DEBUG, "Memory error\n");
+		ddebug(0, "Memory error");
 		ret = -ENOMEM;
 		goto error_hash;
 	}
@@ -327,18 +335,17 @@ static inline void
 crypto_destroy_session(struct csession *ses_ptr)
 {
 	if (!mutex_trylock(&ses_ptr->sem)) {
-		dprintk(2, KERN_DEBUG, "Waiting for semaphore of sid=0x%08X\n",
-			ses_ptr->sid);
+		ddebug(2, "Waiting for semaphore of sid=0x%08X", ses_ptr->sid);
 		mutex_lock(&ses_ptr->sem);
 	}
-	dprintk(2, KERN_DEBUG, "Removed session 0x%08X\n", ses_ptr->sid);
+	ddebug(2, "Removed session 0x%08X", ses_ptr->sid);
 	cryptodev_cipher_deinit(&ses_ptr->cdata);
 	cryptodev_hash_deinit(&ses_ptr->hdata);
-	dprintk(2, KERN_DEBUG, "freeing space for %d user pages\n",
-			ses_ptr->array_size);
+	ddebug(2, "freeing space for %d user pages", ses_ptr->array_size);
 	kfree(ses_ptr->pages);
 	kfree(ses_ptr->sg);
 	mutex_unlock(&ses_ptr->sem);
+	mutex_destroy(&ses_ptr->sem);
 	kfree(ses_ptr);
 }
 
@@ -361,8 +368,7 @@ crypto_finish_session(struct fcrypt *fcr, uint32_t sid)
 	}
 
 	if (unlikely(!ses_ptr)) {
-		dprintk(1, KERN_ERR, "Session with sid=0x%08X not found!\n",
-			sid);
+		derr(1, "Session with sid=0x%08X not found!", sid);
 		ret = -ENOENT;
 	}
 	mutex_unlock(&fcr->sem);
@@ -426,8 +432,7 @@ static void cryptask_routine(struct work_struct *work)
 	list_for_each_entry(item, &tmp, __hook) {
 		item->result = crypto_run(&pcr->fcrypt, &item->kcop);
 		if (unlikely(item->result))
-			dprintk(0, KERN_ERR, "crypto_run() failed: %d\n",
-					item->result);
+			derr(0, "crypto_run() failed: %d", item->result);
 	}
 
 	/* push all handled jobs to the done list at once */
@@ -444,42 +449,55 @@ static void cryptask_routine(struct work_struct *work)
 static int
 cryptodev_open(struct inode *inode, struct file *filp)
 {
-	struct todo_list_item *tmp;
+	struct todo_list_item *tmp, *tmp_next;
 	struct crypt_priv *pcr;
 	int i;
 
-	pcr = kmalloc(sizeof(*pcr), GFP_KERNEL);
+	pcr = kzalloc(sizeof(*pcr), GFP_KERNEL);
 	if (!pcr)
 		return -ENOMEM;
+	filp->private_data = pcr;
 
-	memset(pcr, 0, sizeof(*pcr));
 	mutex_init(&pcr->fcrypt.sem);
-	INIT_LIST_HEAD(&pcr->fcrypt.list);
-
-	INIT_LIST_HEAD(&pcr->free.list);
-	INIT_LIST_HEAD(&pcr->todo.list);
-	INIT_LIST_HEAD(&pcr->done.list);
-	INIT_WORK(&pcr->cryptask, cryptask_routine);
 	mutex_init(&pcr->free.lock);
 	mutex_init(&pcr->todo.lock);
 	mutex_init(&pcr->done.lock);
+
+	INIT_LIST_HEAD(&pcr->fcrypt.list);
+	INIT_LIST_HEAD(&pcr->free.list);
+	INIT_LIST_HEAD(&pcr->todo.list);
+	INIT_LIST_HEAD(&pcr->done.list);
+
+	INIT_WORK(&pcr->cryptask, cryptask_routine);
+
 	init_waitqueue_head(&pcr->user_waiter);
 
 	for (i = 0; i < DEF_COP_RINGSIZE; i++) {
 		tmp = kzalloc(sizeof(struct todo_list_item), GFP_KERNEL);
 		if (!tmp)
-			return -ENOMEM;
+			goto err_ringalloc;
 		pcr->itemcount++;
-		dprintk(2, KERN_DEBUG, "allocated new item at %lx\n",
-				(unsigned long)tmp);
+		ddebug(2, "allocated new item at %p", tmp);
 		list_add(&tmp->__hook, &pcr->free.list);
 	}
 
-	filp->private_data = pcr;
-	dprintk(2, KERN_DEBUG,
-	        "Cryptodev handle initialised, %d elements in queue\n",
-		DEF_COP_RINGSIZE);
+	ddebug(2, "Cryptodev handle initialised, %d elements in queue",
+			DEF_COP_RINGSIZE);
 	return 0;
+
+/* In case of errors, free any memory allocated so far */
+err_ringalloc:
+	list_for_each_entry_safe(tmp, tmp_next, &pcr->free.list, __hook) {
+		list_del(&tmp->__hook);
+		kfree(tmp);
+	}
+	mutex_destroy(&pcr->done.lock);
+	mutex_destroy(&pcr->todo.lock);
+	mutex_destroy(&pcr->free.lock);
+	mutex_destroy(&pcr->fcrypt.sem);
+	kfree(pcr);
+	filp->private_data = NULL;
+	return -ENOMEM;
 }
 
 static int
@@ -494,34 +512,33 @@ cryptodev_release(struct inode *inode, struct file *filp)
 
 	cancel_work_sync(&pcr->cryptask);
 
-	mutex_destroy(&pcr->todo.lock);
-	mutex_destroy(&pcr->done.lock);
-	mutex_destroy(&pcr->free.lock);
-
 	list_splice_tail(&pcr->todo.list, &pcr->free.list);
 	list_splice_tail(&pcr->done.list, &pcr->free.list);
 
 	list_for_each_entry_safe(item, item_safe, &pcr->free.list, __hook) {
-		dprintk(2, KERN_DEBUG, "freeing item at %lx\n",
-				(unsigned long)item);
+		ddebug(2, "freeing item at %p", item);
 		list_del(&item->__hook);
 		kfree(item);
 		items_freed++;
-
 	}
+
 	if (items_freed != pcr->itemcount) {
-		dprintk(0, KERN_ERR,
-		        "freed %d items, but %d should exist!\n",
-		        items_freed, pcr->itemcount);
+		derr(0, "freed %d items, but %d should exist!",
+				items_freed, pcr->itemcount);
 	}
 
 	crypto_finish_all_sessions(&pcr->fcrypt);
+
+	mutex_destroy(&pcr->done.lock);
+	mutex_destroy(&pcr->todo.lock);
+	mutex_destroy(&pcr->free.lock);
+	mutex_destroy(&pcr->fcrypt.sem);
+
 	kfree(pcr);
 	filp->private_data = NULL;
 
-	dprintk(2, KERN_DEBUG,
-	        "Cryptodev handle deinitialised, %d elements freed\n",
-	        items_freed);
+	ddebug(2, "Cryptodev handle deinitialised, %d elements freed",
+			items_freed);
 	return 0;
 }
 
@@ -549,7 +566,7 @@ clonefd(struct file *filp)
 static int crypto_async_run(struct crypt_priv *pcr, struct kernel_crypt_op *kcop)
 {
 	struct todo_list_item *item = NULL;
-	
+
 	if (unlikely(kcop->cop.flags & COP_FLAG_NO_ZC))
 		return -EINVAL;
 
@@ -570,8 +587,7 @@ static int crypto_async_run(struct crypt_priv *pcr, struct kernel_crypt_op *kcop
 		item = kzalloc(sizeof(struct todo_list_item), GFP_KERNEL);
 		if (unlikely(!item))
 			return -EFAULT;
-		dprintk(1, KERN_INFO, "increased item count to %d\n",
-				pcr->itemcount);
+		dinfo(1, "increased item count to %d", pcr->itemcount);
 	}
 
 	memcpy(&item->kcop, kcop, sizeof(struct kernel_crypt_op));
@@ -628,7 +644,7 @@ static int fill_kcop_from_cop(struct kernel_crypt_op *kcop, struct fcrypt *fcr)
 	/* this also enters ses_ptr->sem */
 	ses_ptr = crypto_get_session_by_sid(fcr, cop->ses);
 	if (unlikely(!ses_ptr)) {
-		dprintk(1, KERN_ERR, "invalid session ID=0x%08X\n", cop->ses);
+		derr(1, "invalid session ID=0x%08X", cop->ses);
 		return -EINVAL;
 	}
 	kcop->ivlen = cop->iv ? ses_ptr->cdata.ivsize : 0;
@@ -642,9 +658,8 @@ static int fill_kcop_from_cop(struct kernel_crypt_op *kcop, struct fcrypt *fcr)
 	if (cop->iv) {
 		rc = copy_from_user(kcop->iv, cop->iv, kcop->ivlen);
 		if (unlikely(rc)) {
-			dprintk(1, KERN_ERR,
-				"error copying IV (%d bytes), copy_from_user returned %d for address %lx\n",
-				kcop->ivlen, rc, (unsigned long)cop->iv);
+			derr(1, "error copying IV (%d bytes), copy_from_user returned %d for address %p",
+					kcop->ivlen, rc, cop->iv);
 			return -EFAULT;
 		}
 	}
@@ -688,12 +703,12 @@ static int kcop_to_user(struct kernel_crypt_op *kcop,
 
 	ret = fill_cop_from_kcop(kcop, fcr);
 	if (unlikely(ret)) {
-		dprintk(1, KERN_ERR, "Error in fill_cop_from_kcop\n");
+		derr(1, "Error in fill_cop_from_kcop");
 		return ret;
 	}
 
 	if (unlikely(copy_to_user(arg, &kcop->cop, sizeof(kcop->cop)))) {
-		dprintk(1, KERN_ERR, "Cannot copy to userspace\n");
+		derr(1, "Cannot copy to userspace");
 		return -EFAULT;
 	}
 	return 0;
@@ -707,38 +722,32 @@ static inline void tfm_info_to_alg_info(struct alg_info *dst, struct crypto_tfm 
 			"%s", crypto_tfm_alg_driver_name(tfm));
 }
 
+#ifndef CRYPTO_ALG_KERN_DRIVER_ONLY
 static unsigned int is_known_accelerated(struct crypto_tfm *tfm)
 {
-const char* name = crypto_tfm_alg_driver_name(tfm);
+	const char *name = crypto_tfm_alg_driver_name(tfm);
 
 	if (name == NULL)
-	  return 1; /* assume accelerated */
+		return 1; /* assume accelerated */
 
-	if (strstr(name, "-talitos"))
-	  return 1;
-	else if (strncmp(name, "mv-", 3) == 0)
-	  return 1;
-	else if (strstr(name, "geode"))
-	  return 1;
-	else if (strstr(name, "hifn"))
-	  return 1;
-	else if (strstr(name, "-ixp4xx"))
-	  return 1;
-	else if (strstr(name, "-omap"))
-	  return 1;
-	else if (strstr(name, "-picoxcell"))
-	  return 1;
-	else if (strstr(name, "-s5p"))
-	  return 1;
-	else if (strstr(name, "-ppc4xx"))
-	  return 1;
-	else if (strstr(name, "-caam"))
-	  return 1;
-	else if (strstr(name, "-n2"))
-	  return 1;
+	/* look for known crypto engine names */
+	if (strstr(name, "-talitos")	||
+	    !strncmp(name, "mv-", 3)	||
+	    !strncmp(name, "atmel-", 6)	||
+	    strstr(name, "geode")	||
+	    strstr(name, "hifn")	||
+	    strstr(name, "-ixp4xx")	||
+	    strstr(name, "-omap")	||
+	    strstr(name, "-picoxcell")	||
+	    strstr(name, "-s5p")	||
+	    strstr(name, "-ppc4xx")	||
+	    strstr(name, "-caam")	||
+	    strstr(name, "-n2"))
+		return 1;
 
 	return 0;
 }
+#endif
 
 static int get_session_info(struct fcrypt *fcr, struct session_info_op *siop)
 {
@@ -748,18 +757,17 @@ static int get_session_info(struct fcrypt *fcr, struct session_info_op *siop)
 	/* this also enters ses_ptr->sem */
 	ses_ptr = crypto_get_session_by_sid(fcr, siop->ses);
 	if (unlikely(!ses_ptr)) {
-		dprintk(1, KERN_ERR, "invalid session ID=0x%08X\n", siop->ses);
+		derr(1, "invalid session ID=0x%08X", siop->ses);
 		return -EINVAL;
 	}
 
 	siop->flags = 0;
 
 	if (ses_ptr->cdata.init) {
-		if (ses_ptr->cdata.aead == 0) {
+		if (ses_ptr->cdata.aead == 0)
 			tfm = crypto_ablkcipher_tfm(ses_ptr->cdata.async.s);
-		} else {
+		else
 			tfm = crypto_aead_tfm(ses_ptr->cdata.async.as);
-		}
 		tfm_info_to_alg_info(&siop->cipher_info, tfm);
 #ifdef CRYPTO_ALG_KERN_DRIVER_ONLY
 		if (tfm->__crt_alg->cra_flags & CRYPTO_ALG_KERN_DRIVER_ONLY)
@@ -846,26 +854,26 @@ cryptodev_ioctl(struct file *filp, unsigned int cmd, unsigned long arg_)
 		return copy_to_user(arg, &siop, sizeof(siop));
 	case CIOCCRYPT:
 		if (unlikely(ret = kcop_from_user(&kcop, fcr, arg))) {
-			dprintk(1, KERN_WARNING, "Error copying from user\n");
+			dwarning(1, "Error copying from user");
 			return ret;
 		}
 
 		ret = crypto_run(fcr, &kcop);
 		if (unlikely(ret)) {
-			dprintk(1, KERN_WARNING, "Error in crypto_run\n");
+			dwarning(1, "Error in crypto_run");
 			return ret;
 		}
 
 		return kcop_to_user(&kcop, fcr, arg);
 	case CIOCAUTHCRYPT:
 		if (unlikely(ret = kcaop_from_user(&kcaop, fcr, arg))) {
-			dprintk(1, KERN_WARNING, "Error copying from user\n");
+			dwarning(1, "Error copying from user");
 			return ret;
 		}
 
 		ret = crypto_auth_run(fcr, &kcaop);
 		if (unlikely(ret)) {
-			dprintk(1, KERN_WARNING, "Error in crypto_auth_run\n");
+			dwarning(1, "Error in crypto_auth_run");
 			return ret;
 		}
 		return kcaop_to_user(&kcaop, fcr, arg);
@@ -957,20 +965,20 @@ static int compat_kcop_from_user(struct kernel_crypt_op *kcop,
 }
 
 static int compat_kcop_to_user(struct kernel_crypt_op *kcop,
-                                 struct fcrypt *fcr, void __user *arg)
+                               struct fcrypt *fcr, void __user *arg)
 {
 	int ret;
 	struct compat_crypt_op compat_cop;
 
 	ret = fill_cop_from_kcop(kcop, fcr);
 	if (unlikely(ret)) {
-		dprintk(1, KERN_WARNING, "Error in fill_cop_from_kcop\n");
+		dwarning(1, "Error in fill_cop_from_kcop");
 		return ret;
 	}
 	crypt_op_to_compat(&kcop->cop, &compat_cop);
 
 	if (unlikely(copy_to_user(arg, &compat_cop, sizeof(compat_cop)))) {
-		dprintk(1, KERN_WARNING, "Error copying to user\n");
+		dwarning(1, "Error copying to user");
 		return -EFAULT;
 	}
 	return 0;
@@ -1087,7 +1095,7 @@ cryptodev_register(void)
 
 	rc = misc_register(&cryptodev);
 	if (unlikely(rc)) {
-		printk(KERN_ERR PFX "registration of /dev/crypto failed\n");
+		pr_err(PFX "registration of /dev/crypto failed\n");
 		return rc;
 	}
 
@@ -1101,13 +1109,33 @@ cryptodev_deregister(void)
 }
 
 /* ====== Module init/exit ====== */
+static struct ctl_table verbosity_ctl_dir[] = {
+	{
+		.procname       = "cryptodev_verbosity",
+		.data           = &cryptodev_verbosity,
+		.maxlen         = sizeof(int),
+		.mode           = 0644,
+		.proc_handler   = proc_dointvec,
+	},
+	{0, },
+};
+
+static struct ctl_table verbosity_ctl_root[] = {
+	{
+		.procname       = "ioctl",
+		.mode           = 0555,
+		.child          = verbosity_ctl_dir,
+	},
+	{0, },
+};
+static struct ctl_table_header *verbosity_sysctl_header;
 static int __init init_cryptodev(void)
 {
 	int rc;
 
 	cryptodev_wq = create_workqueue("cryptodev_queue");
 	if (unlikely(!cryptodev_wq)) {
-		printk(KERN_ERR PFX "failed to allocate the cryptodev workqueue\n");
+		pr_err(PFX "failed to allocate the cryptodev workqueue\n");
 		return -EFAULT;
 	}
 
@@ -1117,7 +1145,9 @@ static int __init init_cryptodev(void)
 		return rc;
 	}
 
-	printk(KERN_INFO PFX "driver %s loaded.\n", VERSION);
+	verbosity_sysctl_header = register_sysctl_table(verbosity_ctl_root);
+
+	pr_info(PFX "driver %s loaded.\n", VERSION);
 
 	return 0;
 }
@@ -1127,8 +1157,11 @@ static void __exit exit_cryptodev(void)
 	flush_workqueue(cryptodev_wq);
 	destroy_workqueue(cryptodev_wq);
 
+	if (verbosity_sysctl_header)
+		unregister_sysctl_table(verbosity_sysctl_header);
+
 	cryptodev_deregister();
-	printk(KERN_INFO PFX "driver unloaded.\n");
+	pr_info(PFX "driver unloaded.\n");
 }
 
 module_init(init_cryptodev);
