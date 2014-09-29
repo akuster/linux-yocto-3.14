@@ -87,6 +87,15 @@ config AUFS_INO_T_64
 	/* typedef unsigned long/int __kernel_ino_t */
 	/* alpha and s390x are int */
 
+config AUFS_FHSM
+	bool "File-based Hierarchical Storage Management"
+	help
+	Hierarchical Storage Management (or HSM) is a well-known feature
+	in the storage world. Aufs provides this feature as file-based.
+	with multiple branches.
+	These multiple branches are prioritized, ie. the topmost one
+	should be the fastest drive and be used heavily.
+
 config AUFS_RDU
 	bool "Readdir in userspace"
 	help
@@ -98,17 +107,6 @@ config AUFS_RDU
 	then the work will be handled in user-space which generally
 	shows better performance in most cases.
 	See detail in aufs.5.
-
-config AUFS_SP_IATTR
-	bool "Respect the attributes (mtime/ctime mainly) of special files"
-	help
-	When you write something to a special file, some attributes of it
-	(mtime/ctime mainly) may be updated. Generally such updates are
-	less important (actually some device drivers and NFS ignore
-	it). But some applications (such like test program) requires
-	such updates. If you need these updates, then enable this
-	configuration which introduces some overhead.
-	Currently this configuration handles FIFO only.
 
 config AUFS_SHWH
 	bool "Show whiteouts"
