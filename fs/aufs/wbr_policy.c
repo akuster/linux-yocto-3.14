@@ -165,6 +165,7 @@ static int au_cpdown_dir(struct dentry *dentry, aufs_bindex_t bdst,
 		au_set_ibend(inode, bdst);
 	au_set_h_iptr(inode, bdst, au_igrab(h_inode),
 		      au_hi_flags(inode, /*isdir*/1));
+	au_fhsm_wrote(dentry->d_sb, bdst, /*force*/0);
 	goto out; /* success */
 
 	/* revert */
@@ -174,8 +175,8 @@ out_opq:
 		rerr = au_diropq_remove(dentry, bdst);
 		mutex_unlock(&h_inode->i_mutex);
 		if (unlikely(rerr)) {
-			AuIOErr("failed removing diropq for %.*s b%d (%d)\n",
-				AuDLNPair(dentry), bdst, rerr);
+			AuIOErr("failed removing diropq for %pd b%d (%d)\n",
+				dentry, bdst, rerr);
 			err = -EIO;
 			goto out;
 		}
@@ -184,8 +185,8 @@ out_dir:
 	if (au_ftest_cpdown(*flags, MADE_DIR)) {
 		rerr = vfsub_sio_rmdir(au_h_iptr(dir, bdst), &h_path);
 		if (unlikely(rerr)) {
-			AuIOErr("failed removing %.*s b%d (%d)\n",
-				AuDLNPair(dentry), bdst, rerr);
+			AuIOErr("failed removing %pd b%d (%d)\n",
+				dentry, bdst, rerr);
 			err = -EIO;
 		}
 	}
@@ -676,18 +677,26 @@ static int au_wbr_copyup_bup(struct dentry *dentry)
 }
 
 /* bottom up */
-static int au_wbr_copyup_bu(struct dentry *dentry)
+int au_wbr_do_copyup_bu(struct dentry *dentry, aufs_bindex_t bstart)
 {
 	int err;
-	aufs_bindex_t bstart;
 
-	bstart = au_dbstart(dentry);
 	err = au_wbr_bu(dentry->d_sb, bstart);
 	AuDbg("b%d\n", err);
 	if (err > bstart)
 		err = au_wbr_nonopq(dentry, err);
 
 	AuDbg("b%d\n", err);
+	return err;
+}
+
+static int au_wbr_copyup_bu(struct dentry *dentry)
+{
+	int err;
+	aufs_bindex_t bstart;
+
+	bstart = au_dbstart(dentry);
+	err = au_wbr_do_copyup_bu(dentry, bstart);
 	return err;
 }
 

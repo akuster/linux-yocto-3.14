@@ -25,6 +25,7 @@
 #ifdef __KERNEL__
 
 #include <linux/path.h>
+#include "branch.h"
 
 struct file;
 struct super_block;
@@ -40,7 +41,8 @@ struct super_block;
 #define AuOpt_UDBA_HNOTIFY	(1 << 4)
 #define AuOpt_SHWH		(1 << 5)	/* show whiteout */
 #define AuOpt_PLINK		(1 << 6)	/* pseudo-link */
-#define AuOpt_DIRPERM1		(1 << 7)	/* unimplemented */
+#define AuOpt_DIRPERM1		(1 << 7)	/* ignore the lower dir's perm
+						   bits */
 #define AuOpt_REFROF		(1 << 8)	/* unimplemented */
 #define AuOpt_ALWAYS_DIROPQ	(1 << 9)	/* policy to creating diropq */
 #define AuOpt_SUM		(1 << 10)	/* summation for statfs(2) */
@@ -165,6 +167,7 @@ struct au_opt {
 		int			udba;
 		struct au_opt_wbr_create wbr_create;
 		int			wbr_copyup;
+		unsigned int		fhsm_second;
 	};
 };
 
@@ -190,7 +193,7 @@ struct au_opts {
 
 /* ---------------------------------------------------------------------- */
 
-char *au_optstr_br_perm(int brperm);
+void au_optstr_br_perm(au_br_perm_str_t *str, int perm);
 const char *au_optstr_udba(int udba);
 const char *au_optstr_wbr_copyup(int wbr_copyup);
 const char *au_optstr_wbr_create(int wbr_create);
