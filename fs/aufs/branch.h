@@ -43,6 +43,16 @@ struct au_xino_file {
 #endif
 };
 
+/* File-based Hierarchical Storage Management */
+struct au_br_fhsm {
+#ifdef CONFIG_AUFS_FHSM
+	struct mutex		bf_lock;
+	unsigned long		bf_jiffy;
+	struct aufs_stfs	bf_stfs;
+	int			bf_readable;
+#endif
+};
+
 /* members for writable branch only */
 enum {AuBrWh_BASE, AuBrWh_PLINK, AuBrWh_ORPH, AuBrWh_Last};
 struct au_wbr {
@@ -93,6 +103,7 @@ struct au_branch {
 	atomic_t		br_count;
 
 	struct au_wbr		*br_wbr;
+	struct au_br_fhsm	*br_fhsm;
 
 	/* xino truncation */
 	atomic_t		br_xino_running;
@@ -122,34 +133,6 @@ static inline struct dentry *au_br_dentry(struct au_branch *br)
 static inline struct super_block *au_br_sb(struct au_branch *br)
 {
 	return au_br_mnt(br)->mnt_sb;
-}
-
-/* branch permissions and attributes */
-#define AuBrPerm_RW		1		/* writable, hardlinkable wh */
-#define AuBrPerm_RO		(1 << 1)	/* readonly */
-#define AuBrPerm_RR		(1 << 2)	/* natively readonly */
-#define AuBrPerm_Mask		(AuBrPerm_RW | AuBrPerm_RO | AuBrPerm_RR)
-
-#define AuBrRAttr_WH		(1 << 3)	/* whiteout-able */
-
-#define AuBrWAttr_NoLinkWH	(1 << 4)	/* un-hardlinkable whiteouts */
-
-#define AuBrAttr_UNPIN		(1 << 5)	/* rename-able top dir of
-						   branch */
-
-static inline int au_br_writable(int brperm)
-{
-	return brperm & AuBrPerm_RW;
-}
-
-static inline int au_br_whable(int brperm)
-{
-	return brperm & (AuBrPerm_RW | AuBrRAttr_WH);
-}
-
-static inline int au_br_wh_linkable(int brperm)
-{
-	return !(brperm & AuBrWAttr_NoLinkWH);
 }
 
 static inline int au_br_rdonly(struct au_branch *br)
@@ -185,6 +168,8 @@ long au_ibusy_compat_ioctl(struct file *file, unsigned long arg);
 struct au_opt_mod;
 int au_br_mod(struct super_block *sb, struct au_opt_mod *mod, int remount,
 	      int *do_refresh);
+struct aufs_stfs;
+int au_br_stfs(struct au_branch *br, struct aufs_stfs *stfs);
 
 /* xino.c */
 static const loff_t au_loff_max = LLONG_MAX;
@@ -259,6 +244,25 @@ AuSimpleRwsemFuncs(wbr_wh, struct au_wbr *wbr, &wbr->wbr_wh_rwsem);
 #define WbrWhMustNoWaiters(wbr)	AuRwMustNoWaiters(&wbr->wbr_wh_rwsem)
 #define WbrWhMustAnyLock(wbr)	AuRwMustAnyLock(&wbr->wbr_wh_rwsem)
 #define WbrWhMustWriteLock(wbr)	AuRwMustWriteLock(&wbr->wbr_wh_rwsem)
+
+/* ---------------------------------------------------------------------- */
+
+#ifdef CONFIG_AUFS_FHSM
+static inline void au_br_fhsm_init(struct au_br_fhsm *brfhsm)
+{
+	mutex_init(&brfhsm->bf_lock);
+	brfhsm->bf_jiffy = 0;
+	brfhsm->bf_readable = 0;
+}
+
+static inline void au_br_fhsm_fin(struct au_br_fhsm *brfhsm)
+{
+	mutex_destroy(&brfhsm->bf_lock);
+}
+#else
+AuStubVoid(au_br_fhsm_init, struct au_br_fhsm *brfhsm)
+AuStubVoid(au_br_fhsm_fin, struct au_br_fhsm *brfhsm)
+#endif
 
 #endif /* __KERNEL__ */
 #endif /* __AUFS_BRANCH_H__ */
