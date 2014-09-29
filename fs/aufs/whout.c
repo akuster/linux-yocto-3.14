@@ -63,8 +63,7 @@ int au_wh_name_alloc(struct qstr *wh, const struct qstr *name)
  * test if the @wh_name exists under @h_parent.
  * @try_sio specifies the necessary of super-io.
  */
-int au_wh_test(struct dentry *h_parent, struct qstr *wh_name,
-	       struct au_branch *br, int try_sio)
+int au_wh_test(struct dentry *h_parent, struct qstr *wh_name, int try_sio)
 {
 	int err;
 	struct dentry *wh_dentry;
@@ -72,7 +71,7 @@ int au_wh_test(struct dentry *h_parent, struct qstr *wh_name,
 	if (!try_sio)
 		wh_dentry = vfsub_lkup_one(wh_name, h_parent);
 	else
-		wh_dentry = au_sio_lkup_one(wh_name, h_parent, br);
+		wh_dentry = au_sio_lkup_one(wh_name, h_parent);
 	err = PTR_ERR(wh_dentry);
 	if (IS_ERR(wh_dentry))
 		goto out;
@@ -86,8 +85,8 @@ int au_wh_test(struct dentry *h_parent, struct qstr *wh_name,
 		goto out_wh; /* success */
 
 	err = -EIO;
-	AuIOErr("%.*s Invalid whiteout entry type 0%o.\n",
-		AuDLNPair(wh_dentry), wh_dentry->d_inode->i_mode);
+	AuIOErr("%pd Invalid whiteout entry type 0%o.\n",
+		wh_dentry, wh_dentry->d_inode->i_mode);
 
 out_wh:
 	dput(wh_dentry);
@@ -98,13 +97,13 @@ out:
 /*
  * test if the @h_dentry sets opaque or not.
  */
-int au_diropq_test(struct dentry *h_dentry, struct au_branch *br)
+int au_diropq_test(struct dentry *h_dentry)
 {
 	int err;
 	struct inode *h_dir;
 
 	h_dir = h_dentry->d_inode;
-	err = au_wh_test(h_dentry, &diropq_name, br,
+	err = au_wh_test(h_dentry, &diropq_name,
 			 au_test_h_perm_sio(h_dir, MAY_EXEC));
 	return err;
 }
@@ -148,7 +147,7 @@ struct dentry *au_whtmp_lkup(struct dentry *h_parent, struct au_branch *br,
 	qs.name = name;
 	for (i = 0; i < 3; i++) {
 		sprintf(p, "%.*x", AUFS_WH_TMP_LEN, cnt++);
-		dentry = au_sio_lkup_one(&qs, h_parent, br);
+		dentry = au_sio_lkup_one(&qs, h_parent);
 		if (IS_ERR(dentry) || !dentry->d_inode)
 			goto out_name;
 		dput(dentry);
@@ -289,8 +288,8 @@ static void au_wh_clean(struct inode *h_dir, struct path *whpath,
 		}
 	}
 	if (unlikely(err))
-		pr_warn("failed removing %.*s (%d), ignored.\n",
-			AuDLNPair(whpath->dentry), err);
+		pr_warn("failed removing %pd (%d), ignored.\n",
+			whpath->dentry, err);
 }
 
 static int test_linkable(struct dentry *h_root)
@@ -300,8 +299,8 @@ static int test_linkable(struct dentry *h_root)
 	if (h_dir->i_op->link)
 		return 0;
 
-	pr_err("%.*s (%s) doesn't support link(2), use noplink and rw+nolwh\n",
-	       AuDLNPair(h_root), au_sbtype(h_root->d_sb));
+	pr_err("%pd (%s) doesn't support link(2), use noplink and rw+nolwh\n",
+	       h_root, au_sbtype(h_root->d_sb));
 	return -ENOSYS;
 }
 
@@ -320,7 +319,7 @@ static int au_whdir(struct inode *h_dir, struct path *path)
 	} else if (S_ISDIR(path->dentry->d_inode->i_mode))
 		err = 0;
 	else
-		pr_err("unknown %.*s exists\n", AuDLNPair(path->dentry));
+		pr_err("unknown %pd exists\n", path->dentry);
 
 	return err;
 }
@@ -415,8 +414,7 @@ static int au_wh_init_rw(struct dentry *h_root, struct au_wbr *wbr,
 	} else if (S_ISREG(base[AuBrWh_BASE].dentry->d_inode->i_mode))
 		err = 0;
 	else
-		pr_err("unknown %.*s/%.*s exists\n",
-		       AuDLNPair(h_root), AuDLNPair(base[AuBrWh_BASE].dentry));
+		pr_err("unknown %pd2 exists\n", base[AuBrWh_BASE].dentry);
 	if (unlikely(err))
 		goto out;
 
@@ -519,8 +517,8 @@ int au_wh_init(struct au_branch *br, struct super_block *sb)
 	goto out; /* success */
 
 out_err:
-	pr_err("an error(%d) on the writable branch %.*s(%s)\n",
-	       err, AuDLNPair(h_root), au_sbtype(h_root->d_sb));
+	pr_err("an error(%d) on the writable branch %pd(%s)\n",
+	       err, h_root, au_sbtype(h_root->d_sb));
 out:
 	for (i = 0; i < AuBrWh_Last; i++)
 		dput(base[i].dentry);
@@ -582,8 +580,7 @@ static void reinit_br_wh(void *arg)
 			iput(delegated);
 		}
 	} else {
-		pr_warn("%.*s is moved, ignored\n",
-			AuDLNPair(wbr->wbr_whbase));
+		pr_warn("%pd is moved, ignored\n", wbr->wbr_whbase);
 		err = 0;
 	}
 	dput(wbr->wbr_whbase);
@@ -593,6 +590,8 @@ static void reinit_br_wh(void *arg)
 	wbr_wh_write_unlock(wbr);
 	au_hn_imtx_unlock(hdir);
 	di_read_unlock(a->sb->s_root, AuLock_IR);
+	if (!err)
+		au_fhsm_wrote(a->sb, bindex, /*force*/0);
 
 out:
 	if (wbr)
@@ -680,6 +679,8 @@ static int link_or_create_wh(struct super_block *sb, aufs_bindex_t bindex,
 
 	/* return this error in this context */
 	err = vfsub_create(h_dir, &h_path, WH_MASK, /*want_excl*/true);
+	if (!err)
+		au_fhsm_wrote(sb, bindex, /*force*/0);
 
 out:
 	wbr_wh_read_unlock(wbr);
@@ -804,9 +805,10 @@ struct dentry *au_wh_create(struct dentry *dentry, aufs_bindex_t bindex,
 	wh_dentry = au_wh_lkup(h_parent, &dentry->d_name, au_sbr(sb, bindex));
 	if (!IS_ERR(wh_dentry) && !wh_dentry->d_inode) {
 		err = link_or_create_wh(sb, bindex, wh_dentry);
-		if (!err)
+		if (!err) {
 			au_set_dbwh(dentry, bindex);
-		else {
+			au_fhsm_wrote(sb, bindex, /*force*/0);
+		} else {
 			dput(wh_dentry);
 			wh_dentry = ERR_PTR(err);
 		}
@@ -979,8 +981,7 @@ int au_whtmp_rmdir(struct inode *dir, aufs_bindex_t bindex,
 		return 0; /* success */
 	}
 
-	pr_warn("failed removing %.*s(%d), ignored\n",
-		AuDLNPair(wh_dentry), err);
+	pr_warn("failed removing %pd(%d), ignored\n", wh_dentry, err);
 	return err;
 }
 
@@ -1049,8 +1050,7 @@ void au_whtmp_kick_rmdir(struct inode *dir, aufs_bindex_t bindex,
 	args->wh_dentry = dget(wh_dentry);
 	wkq_err = au_wkq_nowait(call_rmdir_whtmp, args, sb, /*flags*/0);
 	if (unlikely(wkq_err)) {
-		pr_warn("rmdir error %.*s (%d), ignored\n",
-			AuDLNPair(wh_dentry), wkq_err);
+		pr_warn("rmdir error %pd (%d), ignored\n", wh_dentry, wkq_err);
 		au_whtmp_rmdir_free(args);
 	}
 }

@@ -152,8 +152,8 @@ struct file *au_xino_create2(struct file *base_file, struct file *copy_src)
 	path.dentry = vfsub_lookup_one_len(name->name, parent, name->len);
 	if (IS_ERR(path.dentry)) {
 		file = (void *)path.dentry;
-		pr_err("%.*s lookup err %ld\n",
-		       AuLNPair(name), PTR_ERR(path.dentry));
+		pr_err("%pd lookup err %ld\n",
+		       base, PTR_ERR(path.dentry));
 		goto out;
 	}
 
@@ -161,7 +161,7 @@ struct file *au_xino_create2(struct file *base_file, struct file *copy_src)
 	err = vfs_create(dir, path.dentry, S_IRUGO | S_IWUGO, NULL);
 	if (unlikely(err)) {
 		file = ERR_PTR(err);
-		pr_err("%.*s create err %d\n", AuLNPair(name), err);
+		pr_err("%pd create err %d\n", base, err);
 		goto out_dput;
 	}
 
@@ -170,7 +170,7 @@ struct file *au_xino_create2(struct file *base_file, struct file *copy_src)
 				 O_RDWR | O_CREAT | O_EXCL | O_LARGEFILE
 				 /* | __FMODE_NONOTIFY */);
 	if (IS_ERR(file)) {
-		pr_err("%.*s open err %ld\n", AuLNPair(name), PTR_ERR(file));
+		pr_err("%pd open err %ld\n", base, PTR_ERR(file));
 		goto out_dput;
 	}
 
@@ -182,7 +182,7 @@ struct file *au_xino_create2(struct file *base_file, struct file *copy_src)
 		iput(delegated);
 	}
 	if (unlikely(err)) {
-		pr_err("%.*s unlink err %d\n", AuLNPair(name), err);
+		pr_err("%pd unlink err %d\n", base, err);
 		goto out_fput;
 	}
 
@@ -190,7 +190,7 @@ struct file *au_xino_create2(struct file *base_file, struct file *copy_src)
 		/* no one can touch copy_src xino */
 		err = au_copy_file(file, copy_src, vfsub_f_size_read(copy_src));
 		if (unlikely(err)) {
-			pr_err("%.*s copy err %d\n", AuLNPair(name), err);
+			pr_err("%pd copy err %d\n", base, err);
 			goto out_fput;
 		}
 	}
@@ -1200,9 +1200,7 @@ int au_xino_set(struct super_block *sb, struct au_opt_xino *xino, int remount)
 			cur_parent = dget_parent(cur_xino->f_dentry);
 			cur_name = &cur_xino->f_dentry->d_name;
 			skip = (cur_parent == parent
-				&& dname->len == cur_name->len
-				&& !memcmp(dname->name, cur_name->name,
-					   dname->len));
+				&& au_qstreq(dname, cur_name));
 			dput(cur_parent);
 		}
 		if (skip)
