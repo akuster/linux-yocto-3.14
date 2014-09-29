@@ -1035,7 +1035,7 @@ vhost_scsi_handle_vq(struct vhost_scsi *vs, struct vhost_virtqueue *vq)
 			break;
 		}
 
-		if (vs->dev.acked_features & VIRTIO_SCSI_F_T10_PI) {
+		if (vq->acked_features & VIRTIO_SCSI_F_T10_PI) {
 			req = &v_req_pi;
 			lunp = &v_req_pi.lun[0];
 			target = &v_req_pi.lun[1];

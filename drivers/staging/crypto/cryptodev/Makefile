@@ -6,7 +6,6 @@
 CRYPTODEV_CFLAGS ?= #-DENABLE_ASYNC
 KBUILD_CFLAGS += -I$(src) $(CRYPTODEV_CFLAGS)
 KERNEL_DIR ?= /lib/modules/$(shell uname -r)/build
-VERSION = 1.6
 PREFIX ?=
 
 cryptodev-objs = ioctl.o main.o cryptlib.o authenc.o zc.o util.o
@@ -21,11 +20,8 @@ ifneq (${CROSS_COMPILE},)
 KERNEL_MAKE_OPTS += CROSS_COMPILE=${CROSS_COMPILE}
 endif
 
-build: version.h
+build:
 	make ${KERNEL_MAKE_OPTS} modules
-
-version.h: Makefile
-	@echo "#define VERSION \"$(VERSION)\"" > version.h
 
 install: modules_install
 
