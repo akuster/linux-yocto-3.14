@@ -213,7 +213,7 @@ static int set_inode(struct inode *inode, struct dentry *dentry)
 	case S_IFSOCK:
 		btail = au_dbtail(dentry);
 		inode->i_op = &aufs_iop;
-		au_init_special_fop(inode, mode, h_inode->i_rdev);
+		init_special_inode(inode, mode, h_inode->i_rdev);
 		break;
 	default:
 		AuIOErr("Unknown file type 0%o\n", mode);
@@ -427,8 +427,8 @@ new_ino:
 
 	if (unlikely(au_test_fs_unique_ino(h_dentry->d_inode)))
 		AuWarn1("Warning: Un-notified UDBA or repeatedly renamed dir,"
-			" b%d, %s, %.*s, hi%lu, i%lu.\n",
-			bstart, au_sbtype(h_dentry->d_sb), AuDLNPair(dentry),
+			" b%d, %s, %pd, hi%lu, i%lu.\n",
+			bstart, au_sbtype(h_dentry->d_sb), dentry,
 			(unsigned long)h_ino, (unsigned long)ino);
 	ino = 0;
 	err = au_xino_write(sb, bstart, h_ino, /*ino*/0);
@@ -454,6 +454,7 @@ int au_test_ro(struct super_block *sb, aufs_bindex_t bindex,
 	       struct inode *inode)
 {
 	int err;
+	struct inode *hi;
 
 	err = au_br_rdonly(au_sbr(sb, bindex));
 
@@ -466,7 +467,7 @@ int au_test_ro(struct super_block *sb, aufs_bindex_t bindex,
 		 * permission check is unnecessary since vfsub routine
 		 * will be called later
 		 */
-		struct inode *hi = au_h_iptr(inode, bindex);
+		hi = au_h_iptr(inode, bindex);
 		if (hi)
 			err = IS_IMMUTABLE(hi) ? -EROFS : 0;
 	}

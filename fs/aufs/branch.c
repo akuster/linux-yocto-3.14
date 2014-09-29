@@ -76,6 +76,11 @@ static void au_br_do_free(struct au_branch *br)
 		AuRwDestroy(&wbr->wbr_wh_rwsem);
 	}
 
+	if (br->br_fhsm) {
+		au_br_fhsm_fin(br->br_fhsm);
+		kfree(br->br_fhsm);
+	}
+
 	key = br->br_dykey;
 	for (i = 0; i < AuBrDynOp; i++, key++)
 		if (*key)
@@ -171,6 +176,13 @@ static struct au_branch *au_br_alloc(struct super_block *sb, int new_nbranch,
 			goto out_hnotify;
 	}
 
+	add_branch->br_fhsm = NULL;
+	if (au_br_fhsm(perm)) {
+		err = au_fhsm_br_alloc(add_branch);
+		if (unlikely(err))
+			goto out_wbr;
+	}
+
 	err = au_sbr_realloc(au_sbi(sb), new_nbranch);
 	if (!err)
 		err = au_di_realloc(au_di(root), new_nbranch);
@@ -179,8 +191,8 @@ static struct au_branch *au_br_alloc(struct super_block *sb, int new_nbranch,
 	if (!err)
 		return add_branch; /* success */
 
+out_wbr:
 	kfree(add_branch->br_wbr);
-
 out_hnotify:
 	au_hnotify_fin_br(add_branch);
 out_br:
@@ -373,8 +385,8 @@ static int au_wbr_init(struct au_branch *br, struct super_block *sb,
 	if (kst.f_namelen >= NAME_MAX)
 		err = au_br_init_wh(sb, br, perm);
 	else
-		pr_err("%.*s(%s), unsupported namelen %ld\n",
-		       AuDLNPair(au_br_dentry(br)),
+		pr_err("%pd(%s), unsupported namelen %ld\n",
+		       au_br_dentry(br),
 		       au_sbtype(au_br_dentry(br)->d_sb), kst.f_namelen);
 
 out:
@@ -563,6 +575,54 @@ out:
 
 /* ---------------------------------------------------------------------- */
 
+static unsigned long long au_farray_cb(void *a,
+				       unsigned long long max __maybe_unused,
+				       void *arg)
+{
+	unsigned long long n;
+	struct file **p, *f;
+	struct au_sphlhead *files;
+	struct au_finfo *finfo;
+	struct super_block *sb = arg;
+
+	n = 0;
+	p = a;
+	files = &au_sbi(sb)->si_files;
+	spin_lock(&files->spin);
+	hlist_for_each_entry(finfo, &files->head, fi_hlist) {
+		f = finfo->fi_file;
+		if (file_count(f)
+		    && !special_file(file_inode(f)->i_mode)) {
+			get_file(f);
+			*p++ = f;
+			n++;
+			AuDebugOn(n > max);
+		}
+	}
+	spin_unlock(&files->spin);
+
+	return n;
+}
+
+static struct file **au_farray_alloc(struct super_block *sb,
+				     unsigned long long *max)
+{
+	*max = atomic_long_read(&au_sbi(sb)->si_nfiles);
+	return au_array_alloc(max, au_farray_cb, sb);
+}
+
+static void au_farray_free(struct file **a, unsigned long long max)
+{
+	unsigned long long ull;
+
+	for (ull = 0; ull < max; ull++)
+		if (a[ull])
+			fput(a[ull]);
+	au_array_free(a);
+}
+
+/* ---------------------------------------------------------------------- */
+
 /*
  * delete a branch
  */
@@ -639,7 +699,7 @@ static int test_dentry_busy(struct dentry *root, aufs_bindex_t bindex,
 			    && au_h_dptr(d, bindex)
 			    && au_test_dbusy(d, bstart, bend)) {
 				err = -EBUSY;
-				AuVerbose(verbose, "busy %.*s\n", AuDLNPair(d));
+				AuVerbose(verbose, "busy %pd\n", d);
 				AuDbgDentry(d);
 			}
 			di_read_unlock(d, AuLock_IR);
@@ -669,6 +729,8 @@ static int test_inode_busy(struct super_block *sb, aufs_bindex_t bindex,
 	AuDbg("b%d\n", bindex);
 	for (ull = 0; !err && ull < max; ull++) {
 		i = array[ull];
+		if (unlikely(!i))
+			break;
 		if (i->i_ino == AUFS_ROOT_INO)
 			continue;
 
@@ -721,6 +783,137 @@ static int test_children_busy(struct dentry *root, aufs_bindex_t bindex,
 	di_write_lock_child(root); /* aufs_write_lock() calls ..._child() */
 
 	return err;
+}
+
+static int test_dir_busy(struct file *file, aufs_bindex_t br_id,
+			 struct file **to_free, int *idx)
+{
+	int err;
+	unsigned char matched, root;
+	aufs_bindex_t bindex, bend;
+	struct au_fidir *fidir;
+	struct au_hfile *hfile;
+
+	err = 0;
+	root = IS_ROOT(file->f_dentry);
+	if (root) {
+		get_file(file);
+		to_free[*idx] = file;
+		(*idx)++;
+		goto out;
+	}
+
+	matched = 0;
+	fidir = au_fi(file)->fi_hdir;
+	AuDebugOn(!fidir);
+	bend = au_fbend_dir(file);
+	for (bindex = au_fbstart(file); bindex <= bend; bindex++) {
+		hfile = fidir->fd_hfile + bindex;
+		if (!hfile->hf_file)
+			continue;
+
+		if (hfile->hf_br->br_id == br_id) {
+			matched = 1;
+			break;
+		}
+	}
+	if (matched)
+		err = -EBUSY;
+
+out:
+	return err;
+}
+
+static int test_file_busy(struct super_block *sb, aufs_bindex_t br_id,
+			  struct file **to_free, int opened)
+{
+	int err, idx;
+	unsigned long long ull, max;
+	aufs_bindex_t bstart;
+	struct file *file, **array;
+	struct inode *inode;
+	struct dentry *root;
+	struct au_hfile *hfile;
+
+	array = au_farray_alloc(sb, &max);
+	err = PTR_ERR(array);
+	if (IS_ERR(array))
+		goto out;
+
+	err = 0;
+	idx = 0;
+	root = sb->s_root;
+	di_write_unlock(root);
+	for (ull = 0; ull < max; ull++) {
+		file = array[ull];
+		if (unlikely(!file))
+			break;
+
+		/* AuDbg("%pD\n", file); */
+		fi_read_lock(file);
+		bstart = au_fbstart(file);
+		inode = file_inode(file);
+		if (!S_ISDIR(inode->i_mode)) {
+			hfile = &au_fi(file)->fi_htop;
+			if (hfile->hf_br->br_id == br_id)
+				err = -EBUSY;
+		} else
+			err = test_dir_busy(file, br_id, to_free, &idx);
+		fi_read_unlock(file);
+		if (unlikely(err))
+			break;
+	}
+	di_write_lock_child(root);
+	au_farray_free(array, max);
+	AuDebugOn(idx > opened);
+
+out:
+	return err;
+}
+
+static void br_del_file(struct file **to_free, unsigned long long opened,
+			  aufs_bindex_t br_id)
+{
+	unsigned long long ull;
+	aufs_bindex_t bindex, bstart, bend, bfound;
+	struct file *file;
+	struct au_fidir *fidir;
+	struct au_hfile *hfile;
+
+	for (ull = 0; ull < opened; ull++) {
+		file = to_free[ull];
+		if (unlikely(!file))
+			break;
+
+		/* AuDbg("%pD\n", file); */
+		AuDebugOn(!S_ISDIR(file_inode(file)->i_mode));
+		bfound = -1;
+		fidir = au_fi(file)->fi_hdir;
+		AuDebugOn(!fidir);
+		fi_write_lock(file);
+		bstart = au_fbstart(file);
+		bend = au_fbend_dir(file);
+		for (bindex = bstart; bindex <= bend; bindex++) {
+			hfile = fidir->fd_hfile + bindex;
+			if (!hfile->hf_file)
+				continue;
+
+			if (hfile->hf_br->br_id == br_id) {
+				bfound = bindex;
+				break;
+			}
+		}
+		AuDebugOn(bfound < 0);
+		au_set_h_fptr(file, bfound, NULL);
+		if (bfound == bstart) {
+			for (bstart++; bstart <= bend; bstart++)
+				if (au_hf_dir(file, bstart)) {
+					au_set_fbstart(file, bstart);
+					break;
+				}
+		}
+		fi_write_unlock(file);
+	}
 }
 
 static void au_br_do_del_brp(struct au_sbinfo *sbinfo,
@@ -815,17 +1008,29 @@ static void au_br_do_del(struct super_block *sb, aufs_bindex_t bindex,
 	au_br_do_free(br);
 }
 
+static unsigned long long empty_cb(void *array, unsigned long long max,
+				   void *arg)
+{
+	return max;
+}
+
 int au_br_del(struct super_block *sb, struct au_opt_del *del, int remount)
 {
 	int err, rerr, i;
+	unsigned long long opened;
 	unsigned int mnt_flags;
 	aufs_bindex_t bindex, bend, br_id;
 	unsigned char do_wh, verbose;
 	struct au_branch *br;
 	struct au_wbr *wbr;
+	struct dentry *root;
+	struct file **to_free;
 
 	err = 0;
-	bindex = au_find_dbindex(sb->s_root, del->h_path.dentry);
+	opened = 0;
+	to_free = NULL;
+	root = sb->s_root;
+	bindex = au_find_dbindex(root, del->h_path.dentry);
 	if (bindex < 0) {
 		if (remount)
 			goto out; /* success */
@@ -845,10 +1050,20 @@ int au_br_del(struct super_block *sb, struct au_opt_del *del, int remount)
 	}
 	br = au_sbr(sb, bindex);
 	AuDebugOn(!path_equal(&br->br_path, &del->h_path));
-	i = atomic_read(&br->br_count);
-	if (unlikely(i)) {
-		AuVerbose(verbose, "%d file(s) opened\n", i);
-		goto out;
+
+	br_id = br->br_id;
+	opened = atomic_read(&br->br_count);
+	if (unlikely(opened)) {
+		to_free = au_array_alloc(&opened, empty_cb, NULL);
+		err = PTR_ERR(to_free);
+		if (IS_ERR(to_free))
+			goto out;
+
+		err = test_file_busy(sb, br_id, to_free, opened);
+		if (unlikely(err)) {
+			AuVerbose(verbose, "%llu file(s) opened\n", opened);
+			goto out;
+		}
 	}
 
 	wbr = br->br_wbr;
@@ -862,7 +1077,7 @@ int au_br_del(struct super_block *sb, struct au_opt_del *del, int remount)
 		}
 	}
 
-	err = test_children_busy(sb->s_root, bindex, verbose);
+	err = test_children_busy(root, bindex, verbose);
 	if (unlikely(err)) {
 		if (do_wh)
 			goto out_wh;
@@ -870,7 +1085,16 @@ int au_br_del(struct super_block *sb, struct au_opt_del *del, int remount)
 	}
 
 	err = 0;
-	br_id = br->br_id;
+	if (to_free) {
+		/*
+		 * now we confirmed the branch is deletable.
+		 * let's free the remaining opened dirs on the branch.
+		 */
+		di_write_unlock(root);
+		br_del_file(to_free, opened, br_id);
+		di_write_lock_child(root);
+	}
+
 	if (!remount)
 		au_br_do_del(sb, bindex, br);
 	else {
@@ -880,10 +1104,10 @@ int au_br_del(struct super_block *sb, struct au_opt_del *del, int remount)
 	}
 
 	if (!bindex) {
-		au_cpup_attr_all(sb->s_root->d_inode, /*force*/1);
+		au_cpup_attr_all(root->d_inode, /*force*/1);
 		sb->s_maxbytes = au_sbr_sb(sb, 0)->s_maxbytes;
 	} else
-		au_sub_nlink(sb->s_root->d_inode, del->h_path.dentry->d_inode);
+		au_sub_nlink(root->d_inode, del->h_path.dentry->d_inode);
 	if (au_opt_test(mnt_flags, PLINK))
 		au_plink_half_refresh(sb, br_id);
 
@@ -898,6 +1122,8 @@ out_wh:
 		pr_warn("failed re-creating base whiteout, %s. (%d)\n",
 			del->pathname, rerr);
 out:
+	if (to_free)
+		au_farray_free(to_free, opened);
 	return err;
 }
 
@@ -997,52 +1223,6 @@ static int need_sigen_inc(int old, int new)
 		|| do_need_sigen_inc(new, old);
 }
 
-static unsigned long long au_farray_cb(void *a,
-				       unsigned long long max __maybe_unused,
-				       void *arg)
-{
-	unsigned long long n;
-	struct file **p, *f;
-	struct au_sphlhead *files;
-	struct au_finfo *finfo;
-	struct super_block *sb = arg;
-
-	n = 0;
-	p = a;
-	files = &au_sbi(sb)->si_files;
-	spin_lock(&files->spin);
-	hlist_for_each_entry(finfo, &files->head, fi_hlist) {
-		f = finfo->fi_file;
-		if (file_count(f)
-		    && !special_file(file_inode(f)->i_mode)) {
-			get_file(f);
-			*p++ = f;
-			n++;
-			AuDebugOn(n > max);
-		}
-	}
-	spin_unlock(&files->spin);
-
-	return n;
-}
-
-static struct file **au_farray_alloc(struct super_block *sb,
-				     unsigned long long *max)
-{
-	*max = atomic_long_read(&au_sbi(sb)->si_nfiles);
-	return au_array_alloc(max, au_farray_cb, sb);
-}
-
-static void au_farray_free(struct file **a, unsigned long long max)
-{
-	unsigned long long ull;
-
-	for (ull = 0; ull < max; ull++)
-		if (a[ull])
-			fput(a[ull]);
-	au_array_free(a);
-}
-
 static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 {
 	int err, do_warn;
@@ -1066,13 +1246,14 @@ static int au_br_mod_files_ro(struct super_block *sb, aufs_bindex_t bindex)
 	br_id = au_sbr_id(sb, bindex);
 	for (ull = 0; ull < max; ull++) {
 		file = array[ull];
+		if (unlikely(!file))
+			break;
 
-		/* AuDbg("%.*s\n", AuDLNPair(file->f_dentry)); */
+		/* AuDbg("%pD\n", file); */
 		fi_read_lock(file);
 		if (unlikely(au_test_mmapped(file))) {
 			err = -EBUSY;
-			AuVerbose(verbose, "mmapped %.*s\n",
-				  AuDLNPair(file->f_dentry));
+			AuVerbose(verbose, "mmapped %pD\n", file);
 			AuDbgFile(file);
 			FiMustNoWaiters(file);
 			fi_read_unlock(file);
@@ -1141,6 +1322,7 @@ int au_br_mod(struct super_block *sb, struct au_opt_mod *mod, int remount,
 	aufs_bindex_t bindex;
 	struct dentry *root;
 	struct au_branch *br;
+	struct au_br_fhsm *bf;
 
 	root = sb->s_root;
 	bindex = au_find_dbindex(root, mod->h_root);
@@ -1162,11 +1344,21 @@ int au_br_mod(struct super_block *sb, struct au_opt_mod *mod, int remount,
 	if (br->br_perm == mod->perm)
 		return 0; /* success */
 
+	/* pre-allocate for non-fhsm --> fhsm */
+	bf = NULL;
+	if (!au_br_fhsm(br->br_perm) && au_br_fhsm(mod->perm)) {
+		err = au_fhsm_br_alloc(br);
+		if (unlikely(err))
+			goto out;
+		bf = br->br_fhsm;
+		br->br_fhsm = NULL;
+	}
+
 	if (au_br_writable(br->br_perm)) {
 		/* remove whiteout base */
 		err = au_br_init_wh(sb, br, mod->perm);
 		if (unlikely(err))
-			goto out;
+			goto out_bf;
 
 		if (!au_br_writable(mod->perm)) {
 			/* rw --> ro, file might be mmapped */
@@ -1202,19 +1394,51 @@ int au_br_mod(struct super_block *sb, struct au_opt_mod *mod, int remount,
 			}
 		}
 	}
+	if (unlikely(err))
+		goto out_bf;
 
-	if (!err) {
-		if ((br->br_perm & AuBrAttr_UNPIN)
-		    && !(mod->perm & AuBrAttr_UNPIN))
-			au_br_dflags_force(br);
-		else if (!(br->br_perm & AuBrAttr_UNPIN)
-			 && (mod->perm & AuBrAttr_UNPIN))
-			au_br_dflags_restore(br);
-		*do_refresh |= need_sigen_inc(br->br_perm, mod->perm);
-		br->br_perm = mod->perm;
-	}
+	if (au_br_fhsm(br->br_perm)) {
+		if (!au_br_fhsm(mod->perm)) {
+			/* fhsm --> non-fhsm */
+			au_br_fhsm_fin(br->br_fhsm);
+			kfree(br->br_fhsm);
+			br->br_fhsm = NULL;
+		}
+	} else if (au_br_fhsm(mod->perm))
+		/* non-fhsm --> fhsm */
+		br->br_fhsm = bf;
 
+	if ((br->br_perm & AuBrAttr_UNPIN)
+	    && !(mod->perm & AuBrAttr_UNPIN))
+		au_br_dflags_force(br);
+	else if (!(br->br_perm & AuBrAttr_UNPIN)
+		 && (mod->perm & AuBrAttr_UNPIN))
+		au_br_dflags_restore(br);
+	*do_refresh |= need_sigen_inc(br->br_perm, mod->perm);
+	br->br_perm = mod->perm;
+	goto out; /* success */
+
+out_bf:
+	kfree(bf);
 out:
 	AuTraceErr(err);
+	return err;
+}
+
+/* ---------------------------------------------------------------------- */
+
+int au_br_stfs(struct au_branch *br, struct aufs_stfs *stfs)
+{
+	int err;
+	struct kstatfs kstfs;
+
+	err = vfs_statfs(&br->br_path, &kstfs);
+	if (!err) {
+		stfs->f_blocks = kstfs.f_blocks;
+		stfs->f_bavail = kstfs.f_bavail;
+		stfs->f_files = kstfs.f_files;
+		stfs->f_ffree = kstfs.f_ffree;
+	}
+
 	return err;
 }

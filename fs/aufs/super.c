@@ -96,7 +96,7 @@ static int au_show_brs(struct seq_file *seq, struct super_block *sb)
 	struct path path;
 	struct au_hdentry *hdp;
 	struct au_branch *br;
-	char *perm;
+	au_br_perm_str_t perm;
 
 	err = 0;
 	bend = au_sbend(sb);
@@ -107,14 +107,10 @@ static int au_show_brs(struct seq_file *seq, struct super_block *sb)
 		path.dentry = hdp[bindex].hd_dentry;
 		err = au_seq_path(seq, &path);
 		if (err > 0) {
-			perm = au_optstr_br_perm(br->br_perm);
-			if (perm) {
-				err = seq_printf(seq, "=%s", perm);
-				kfree(perm);
-				if (err == -1)
-					err = -E2BIG;
-			} else
-				err = -ENOMEM;
+			au_optstr_br_perm(&perm, br->br_perm);
+			err = seq_printf(seq, "=%s", perm.a);
+			if (err == -1)
+				err = -E2BIG;
 		}
 		if (!err && bindex != bend)
 			err = seq_putc(seq, ':');
@@ -260,7 +256,7 @@ static int aufs_show_options(struct seq_file *m, struct dentry *dentry)
 	AuBool(SHWH, shwh);
 	AuBool(PLINK, plink);
 	AuBool(DIO, dio);
-	/* AuBool(DIRPERM1, dirperm1); */
+	AuBool(DIRPERM1, dirperm1);
 	/* AuBool(REFROF, refrof); */
 
 	v = sbinfo->si_wbr_create;
@@ -282,6 +278,8 @@ static int aufs_show_options(struct seq_file *m, struct dentry *dentry)
 
 	AuUInt(RDBLK, rdblk, sbinfo->si_rdblk);
 	AuUInt(RDHASH, rdhash, sbinfo->si_rdhash);
+
+	au_fhsm_show(m, sbinfo);
 
 	AuBool(SUM, sum);
 	/* AuBool(SUM_W, wsum); */
@@ -484,7 +482,7 @@ void au_array_free(void *array)
 void *au_array_alloc(unsigned long long *hint, au_arraycb_t cb, void *arg)
 {
 	void *array;
-	unsigned long long n;
+	unsigned long long n, sz;
 
 	array = NULL;
 	n = 0;
@@ -497,9 +495,10 @@ void *au_array_alloc(unsigned long long *hint, au_arraycb_t cb, void *arg)
 		goto out;
 	}
 
-	array = kmalloc(sizeof(array) * *hint, GFP_NOFS);
+	sz = sizeof(array) * *hint;
+	array = kzalloc(sz, GFP_NOFS);
 	if (unlikely(!array))
-		array = vmalloc(sizeof(array) * *hint);
+		array = vzalloc(sz);
 	if (unlikely(!array)) {
 		array = ERR_PTR(-ENOMEM);
 		goto out;
@@ -666,6 +665,8 @@ static int au_refresh_i(struct super_block *sb)
 	sigen = au_sigen(sb);
 	for (ull = 0; ull < max; ull++) {
 		inode = array[ull];
+		if (unlikely(!inode))
+			break;
 		if (au_iigen(inode, NULL) != sigen) {
 			ii_write_lock_child(inode);
 			e = au_refresh_hinode_self(inode);
@@ -799,6 +800,7 @@ static int aufs_remount_fs(struct super_block *sb, int *flags, char *data)
 		au_dy_arefresh(do_dx);
 	}
 
+	au_fhsm_wrote_all(sb, /*force*/1); /* ?? */
 	aufs_write_unlock(root);
 
 out_mtx:
@@ -974,6 +976,7 @@ static void aufs_kill_sb(struct super_block *sb)
 	if (sbinfo) {
 		au_sbilist_del(sb);
 		aufs_write_lock(sb->s_root);
+		au_fhsm_fin(sb);
 		if (sbinfo->si_wbr_create_ops->fin)
 			sbinfo->si_wbr_create_ops->fin(sb);
 		if (au_opt_test(sbinfo->si_mntflags, UDBA_HNOTIFY)) {
@@ -987,7 +990,7 @@ static void aufs_kill_sb(struct super_block *sb)
 		aufs_write_unlock(sb->s_root);
 		au_nwt_flush(&sbinfo->si_nowait);
 	}
-	generic_shutdown_super(sb);
+	kill_anon_super(sb);
 }
 
 struct file_system_type aufs_fs_type = {
