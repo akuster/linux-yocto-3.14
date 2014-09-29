@@ -19,6 +19,7 @@
  * sysfs interface
  */
 
+#include <linux/compat.h>
 #include <linux/seq_file.h>
 #include "aufs.h"
 
@@ -83,7 +84,7 @@ static int sysaufs_si_br(struct seq_file *seq, struct super_block *sb,
 	struct path path;
 	struct dentry *root;
 	struct au_branch *br;
-	char *perm;
+	au_br_perm_str_t perm;
 
 	AuDbg("b%d\n", bindex);
 
@@ -97,23 +98,16 @@ static int sysaufs_si_br(struct seq_file *seq, struct super_block *sb,
 		path.mnt = au_br_mnt(br);
 		path.dentry = au_h_dptr(root, bindex);
 		au_seq_path(seq, &path);
-		di_read_unlock(root, !AuLock_IR);
-		perm = au_optstr_br_perm(br->br_perm);
-		if (perm) {
-			err = seq_printf(seq, "=%s\n", perm);
-			kfree(perm);
-			if (err == -1)
-				err = -E2BIG;
-		} else
-			err = -ENOMEM;
+		au_optstr_br_perm(&perm, br->br_perm);
+		err = seq_printf(seq, "=%s\n", perm.a);
 		break;
 	case AuBrSysfs_BRID:
 		err = seq_printf(seq, "%d\n", br->br_id);
-		di_read_unlock(root, !AuLock_IR);
-		if (err == -1)
-			err = -E2BIG;
 		break;
 	}
+	di_read_unlock(root, !AuLock_IR);
+	if (err == -1)
+		err = -E2BIG;
 
 	return err;
 }
@@ -219,6 +213,88 @@ out_unlock:
 out:
 	return err;
 }
+
+/* ---------------------------------------------------------------------- */
+
+static int au_brinfo(struct super_block *sb, union aufs_brinfo __user *arg)
+{
+	int err;
+	int16_t brid;
+	aufs_bindex_t bindex, bend;
+	size_t sz;
+	char *buf;
+	struct seq_file *seq;
+	struct au_branch *br;
+
+	si_read_lock(sb, AuLock_FLUSH);
+	bend = au_sbend(sb);
+	err = bend + 1;
+	if (!arg)
+		goto out;
+
+	err = -ENOMEM;
+	buf = (void *)__get_free_page(GFP_NOFS);
+	if (unlikely(!buf))
+		goto out;
+
+	seq = au_seq(buf, PAGE_SIZE);
+	err = PTR_ERR(seq);
+	if (IS_ERR(seq))
+		goto out_buf;
+
+	sz = sizeof(*arg) - offsetof(union aufs_brinfo, path);
+	for (bindex = 0; bindex <= bend; bindex++, arg++) {
+		err = !access_ok(VERIFY_WRITE, arg, sizeof(*arg));
+		if (unlikely(err))
+			break;
+
+		br = au_sbr(sb, bindex);
+		brid = br->br_id;
+		BUILD_BUG_ON(sizeof(brid) != sizeof(arg->id));
+		err = __put_user(brid, &arg->id);
+		if (unlikely(err))
+			break;
+
+		BUILD_BUG_ON(sizeof(br->br_perm) != sizeof(arg->perm));
+		err = __put_user(br->br_perm, &arg->perm);
+		if (unlikely(err))
+			break;
+
+		au_seq_path(seq, &br->br_path);
+		err = seq_putc(seq, '\0');
+		if (!err && seq->count <= sz) {
+			err = copy_to_user(arg->path, seq->buf, seq->count);
+			seq->count = 0;
+			if (unlikely(err))
+				break;
+		} else {
+			err = -E2BIG;
+			goto out_seq;
+		}
+	}
+	if (unlikely(err))
+		err = -EFAULT;
+
+out_seq:
+	kfree(seq);
+out_buf:
+	free_page((unsigned long)buf);
+out:
+	si_read_unlock(sb);
+	return err;
+}
+
+long au_brinfo_ioctl(struct file *file, unsigned long arg)
+{
+	return au_brinfo(file->f_dentry->d_sb, (void __user *)arg);
+}
+
+#ifdef CONFIG_COMPAT
+long au_brinfo_compat_ioctl(struct file *file, unsigned long arg)
+{
+	return au_brinfo(file->f_dentry->d_sb, compat_ptr(arg));
+}
+#endif
 
 /* ---------------------------------------------------------------------- */
 

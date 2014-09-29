@@ -56,6 +56,7 @@ atomic_t aufs_debug = ATOMIC_INIT(0);
 MODULE_PARM_DESC(debug, "debug print");
 module_param_named(debug, aufs_debug, atomic_t, S_IRUGO | S_IWUSR | S_IWGRP);
 
+DEFINE_MUTEX(au_dbg_mtx);	/* just to serialize the dbg msgs */
 char *au_plevel = KERN_DEBUG;
 #define dpri(fmt, ...) do {					\
 	if ((au_plevel						\
@@ -177,6 +178,7 @@ static int do_pri_dentry(aufs_bindex_t bindex, struct dentry *dentry)
 {
 	struct dentry *wh = NULL;
 	int hn;
+	struct au_iinfo *iinfo;
 
 	if (!dentry || IS_ERR(dentry)) {
 		dpri("d%d: err %ld\n", bindex, PTR_ERR(dentry));
@@ -184,14 +186,14 @@ static int do_pri_dentry(aufs_bindex_t bindex, struct dentry *dentry)
 	}
 	/* do not call dget_parent() here */
 	/* note: access d_xxx without d_lock */
-	dpri("d%d: %.*s?/%.*s, %s, cnt %d, flags 0x%x\n",
-	     bindex,
-	     AuDLNPair(dentry->d_parent), AuDLNPair(dentry),
+	dpri("d%d: %p, %pd2?, %s, cnt %d, flags 0x%x, %shashed\n",
+	     bindex, dentry, dentry,
 	     dentry->d_sb ? au_sbtype(dentry->d_sb) : "??",
-	     d_count(dentry), dentry->d_flags);
+	     d_count(dentry), dentry->d_flags,
+	     d_unhashed(dentry) ? "un" : "");
 	hn = -1;
 	if (bindex >= 0 && dentry->d_inode && au_test_aufs(dentry->d_sb)) {
-		struct au_iinfo *iinfo = au_ii(dentry->d_inode);
+		iinfo = au_ii(dentry->d_inode);
 		if (iinfo) {
 			hn = !!au_hn(iinfo->ii_hinode + bindex);
 			wh = iinfo->ii_hinode[0 + bindex].hi_whdentry;
@@ -215,9 +217,10 @@ void au_dpri_dentry(struct dentry *dentry)
 	dinfo = au_di(dentry);
 	if (!dinfo)
 		return;
-	dpri("d-1: bstart %d, bend %d, bwh %d, bdiropq %d, gen %d\n",
+	dpri("d-1: bstart %d, bend %d, bwh %d, bdiropq %d, gen %d, tmp %d\n",
 	     dinfo->di_bstart, dinfo->di_bend,
-	     dinfo->di_bwh, dinfo->di_bdiropq, au_digen(dentry));
+	     dinfo->di_bwh, dinfo->di_bdiropq, au_digen(dentry),
+	     dinfo->di_tmpfile);
 	if (dinfo->di_bstart < 0)
 		return;
 	hdp = dinfo->di_hdentry;
