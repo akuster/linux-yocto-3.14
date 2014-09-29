@@ -227,7 +227,7 @@ static int hn_gen_by_inode(char *name, unsigned int nlen, struct inode *inode,
 		spin_unlock(&inode->i_lock);
 	} else {
 		au_fset_si(au_sbi(inode->i_sb), FAILED_REFRESH_DIR);
-		d = d_find_alias(inode);
+		d = d_find_any_alias(inode);
 		if (!d) {
 			au_iigen_dec(inode);
 			goto out;
@@ -317,6 +317,7 @@ struct hn_job_args {
 static int hn_job(struct hn_job_args *a)
 {
 	const unsigned int isdir = au_ftest_hnjob(a->flags, ISDIR);
+	int e;
 
 	/* reset xino */
 	if (au_ftest_hnjob(a->flags, XINO0) && a->inode)
@@ -326,18 +327,19 @@ static int hn_job(struct hn_job_args *a)
 	    && a->inode
 	    && a->h_inode) {
 		mutex_lock_nested(&a->h_inode->i_mutex, AuLsc_I_CHILD);
-		if (!a->h_inode->i_nlink)
+		if (!a->h_inode->i_nlink
+		    && !(a->h_inode->i_state & I_LINKABLE))
 			hn_xino(a->inode, a->h_inode); /* ignore this error */
 		mutex_unlock(&a->h_inode->i_mutex);
 	}
 
 	/* make the generation obsolete */
 	if (au_ftest_hnjob(a->flags, GEN)) {
-		int err = -1;
+		e = -1;
 		if (a->inode)
-			err = hn_gen_by_inode(a->h_name, a->h_nlen, a->inode,
+			e = hn_gen_by_inode(a->h_name, a->h_nlen, a->inode,
 					      isdir);
-		if (err && a->dentry)
+		if (e && a->dentry)
 			hn_gen_by_name(a->dentry, isdir);
 		/* ignore this error */
 	}
@@ -357,8 +359,7 @@ static int hn_job(struct hn_job_args *a)
 	if (au_ftest_hnjob(a->flags, MNTPNT)
 	    && a->dentry
 	    && d_mountpoint(a->dentry))
-		pr_warn("mount-point %.*s is removed or renamed\n",
-			AuDLNPair(a->dentry));
+		pr_warn("mount-point %pd is removed or renamed\n", a->dentry);
 
 	return 0;
 }
@@ -371,14 +372,14 @@ static struct dentry *lookup_wlock_by_name(char *name, unsigned int nlen,
 	struct dentry *dentry, *d, *parent;
 	struct qstr *dname;
 
-	parent = d_find_alias(dir);
+	parent = d_find_any_alias(dir);
 	if (!parent)
 		return NULL;
 
 	dentry = NULL;
 	spin_lock(&parent->d_lock);
 	list_for_each_entry(d, &parent->d_subdirs, d_u.d_child) {
-		/* AuDbg("%.*s\n", AuDLNPair(d)); */
+		/* AuDbg("%pd\n", d); */
 		spin_lock_nested(&d->d_lock, DENTRY_D_LOCK_NESTED);
 		dname = &d->d_name;
 		if (dname->len != nlen || memcmp(dname->name, name, nlen))
@@ -393,7 +394,7 @@ static struct dentry *lookup_wlock_by_name(char *name, unsigned int nlen,
 			break;
 		}
 
-	cont_unlock:
+cont_unlock:
 		spin_unlock(&d->d_lock);
 	}
 	spin_unlock(&parent->d_lock);
@@ -585,7 +586,7 @@ int au_hnotify(struct inode *h_dir, struct au_hnotify *hnotify, u32 mask,
 		au_fset_hnjob(flags[AuHn_CHILD], MNTPNT);
 		/*FALLTHROUGH*/
 	case FS_CREATE:
-		AuDebugOn(!h_child_name || !h_child_inode);
+		AuDebugOn(!h_child_name);
 		break;
 
 	case FS_DELETE:
