@@ -50,7 +50,7 @@ static struct sk_buff *gre_gso_segment(struct sk_buff *skb,
 
 	greh = (struct gre_base_hdr *)skb_transport_header(skb);
 
-	ghl = skb_inner_network_header(skb) - skb_transport_header(skb);
+	ghl = skb_inner_mac_header(skb) - skb_transport_header(skb);
 	if (unlikely(ghl < sizeof(*greh)))
 		goto out;
 
@@ -254,6 +254,9 @@ static int gre_gro_complete(struct sk_buff *skb, int nhoff)
 	unsigned int grehlen = sizeof(*greh);
 	int err = -ENOENT;
 	__be16 type;
+
+	skb->encapsulation = 1;
+	skb_shinfo(skb)->gso_type = SKB_GSO_GRE;
 
 	type = greh->protocol;
 	if (greh->flags & GRE_KEY)
