@@ -5,7 +5,7 @@
 #############################################################################
 # LTSI project specific patches
 #
-patch patches.ltsi/ltsi-makefile-addition.patch
+# patch patches.ltsi/ltsi-makefile-addition.patch
 
 
 #############################################################################
