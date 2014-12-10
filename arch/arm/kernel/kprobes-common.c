@@ -13,6 +13,7 @@
 
 #include <linux/kernel.h>
 #include <linux/kprobes.h>
+#include <asm/opcodes.h>
 
 #include "kprobes.h"
 
@@ -39,6 +40,7 @@ static void __kprobes simulate_ldm1stm1(probes_opcode_t insn,
 
 	if (!ubit)
 		addr -= reg_count;
+
 	addr += (!pbit == !ubit);
 
 	reg_bit_vector = insn & 0xffff;
@@ -153,8 +155,10 @@ kprobe_decode_ldmstm(probes_opcode_t insn, struct arch_probes_insn *asi,
 
 	if (handler) {
 		/* We can emulate the instruction in (possibly) modified form */
-		asi->insn[0] = (insn & 0xfff00000) | (rn << 16) | reglist;
+		asi->insn[0] = __opcode_to_mem_arm((insn & 0xfff00000) |
+						   (rn << 16) | reglist);
 		asi->insn_handler = handler;
+
 		return INSN_GOOD;
 	}
 
