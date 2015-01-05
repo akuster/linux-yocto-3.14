@@ -1,0 +1,34 @@
+From: Anthony G. Basile <blueness@gentoo.org>
+
+PAX_EMUTRAMP is needed for libffi to avoid RWX mmap-ings using PaX emulation of trampolines.
+We default PAX_EMUTRAMP='y' since almost all hardened users will want this.
+
+See bug:
+ http://bugs.gentoo.org/show_bug.cgi?id=329499
+ http://bugs.gentoo.org/show_bug.cgi?id=457194
+
+diff -Naur linux-3.9.2-hardened.orig/security/Kconfig linux-3.9.2-hardened/security/Kconfig
+--- linux-3.9.2-hardened.orig/security/Kconfig	2013-05-18 08:53:41.000000000 -0400
++++ linux-3.9.2-hardened/security/Kconfig	2013-05-18 09:17:57.000000000 -0400
+@@ -433,7 +433,7 @@
+ 
+ config PAX_EMUTRAMP
+ 	bool "Emulate trampolines"
+-	default y if PARISC || GRKERNSEC_CONFIG_AUTO
++	default y
+ 	depends on (PAX_PAGEEXEC || PAX_SEGMEXEC) && (PARISC || X86)
+ 	help
+ 	  There are some programs and libraries that for one reason or
+@@ -456,6 +456,12 @@
+ 	  utilities to disable CONFIG_PAX_PAGEEXEC and CONFIG_PAX_SEGMEXEC
+ 	  for the affected files.
+ 
++	  NOTE: Hardened Gentoo users needs this option enabled for python
++	  to work properly.  Without it, all python apps, including portage,
++	  may fail.  By default, python has CONFIG_PAX_EMUTRAMP enabled by
++	  the ebuild when USE=pax_kernel is set, otherise CONFIG_PAX_PAGEEXEC
++	  is enabled as a fallback.
++
+ 	  NOTE: enabling this feature *may* open up a loophole in the
+ 	  protection provided by non-executable pages that an attacker
+ 	  could abuse.  Therefore the best solution is to not have any
